@@ -654,6 +654,7 @@ pub fn run() {
                 let _ = state.stop_api_gateway();
             }
             // Clicking the Dock icon while the window is hidden (closed to tray) reopens it.
+            #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Reopen { .. } = event {
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.show();
