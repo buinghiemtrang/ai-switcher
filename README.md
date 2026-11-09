@@ -9,7 +9,7 @@ A downloadable installer is available only after a successful build is published
 On Ubuntu 24.04 amd64, download the `.deb` from this repository's Releases page, then run:
 
 ```bash
-sudo apt install "./AI switcher_0.12.0_amd64.deb"
+sudo apt install "./AI.switcher_0.12.0_amd64.deb"
 ```
 
 The Linux adaptation is currently a preview. Antigravity Linux support is experimental; close the IDE before switching accounts.
