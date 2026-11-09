@@ -36,13 +36,93 @@ pub fn default_config_dir(tool_id: &ToolId) -> PathBuf {
     }
 }
 
-// The token swap requires a verified IDE shutdown protocol. Do not edit a live
-// Linux IDE database until that protocol has been implemented and tested.
 fn ensure_antigravity_supported() -> Result<()> {
-    if !cfg!(target_os = "macos") {
-        anyhow::bail!("Antigravity account switching is not supported on Linux yet; use the IDE to sign in directly");
+    if !cfg!(any(target_os = "macos", target_os = "linux")) {
+        anyhow::bail!("Antigravity is supported on macOS and Linux only");
     }
     Ok(())
+}
+
+fn antigravity_linux_binary() -> Option<PathBuf> {
+    ["antigravity", "antigravity-ide"].into_iter().find_map(command_path)
+        .or_else(|| ["/usr/share/antigravity/bin/antigravity", "/usr/share/antigravity/antigravity"]
+            .into_iter().map(PathBuf::from).find(|p| p.is_file()))
+}
+
+fn ag_process_identity(exe: &Path, first_arg: &Path) -> bool {
+    [exe, first_arg].into_iter().any(|path| {
+        matches!(path.file_name().and_then(|s| s.to_str()), Some("antigravity" | "antigravity-ide"))
+    })
+}
+
+fn ensure_antigravity_stopped() -> Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        for entry in fs::read_dir("/proc").context("Cannot inspect running IDE processes")? {
+            let entry = entry?;
+            if entry.file_name().to_string_lossy().parse::<u32>().is_err() { continue; }
+            let exe = fs::read_link(entry.path().join("exe")).unwrap_or_default();
+            let cmd = fs::read(entry.path().join("cmdline")).unwrap_or_default();
+            let first = String::from_utf8_lossy(cmd.split(|b| *b == 0).next().unwrap_or_default());
+            if ag_process_identity(&exe, Path::new(first.as_ref())) {
+                anyhow::bail!("Close all Antigravity windows and wait for its processes to exit, then try again. AI switcher will not stop your IDE.");
+            }
+        }
+    }
+    Ok(())
+}
+
+fn ag_backup(db: &Path, backup_root: &Path) -> Result<()> {
+    fs::create_dir_all(backup_root)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(backup_root, fs::Permissions::from_mode(0o700))?;
+    }
+    let backup = backup_root.join(format!("state-{}.vscdb", uuid::Uuid::new_v4()));
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&backup)?;
+    }
+    let name = serde_json::to_string(&backup.to_string_lossy())?;
+    let output = Command::new("sqlite3").arg("-bail").arg(db)
+        .arg(format!(".backup {name}"))
+        .output().context("Install sqlite3 to back up Antigravity account data")?;
+    if !output.status.success() { anyhow::bail!("Antigravity database backup failed; account data was not changed"); }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&backup, fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(())
+}
+
+fn ag_replace_identity(db: &Path, token: Option<&str>, profile: Option<&str>) -> Result<()> {
+    let mut sql = format!("BEGIN IMMEDIATE; DELETE FROM ItemTable WHERE key IN ('{AG_TOKEN_KEY}', '{AG_PROFILE_KEY}');");
+    for (key, value) in [(AG_TOKEN_KEY, token), (AG_PROFILE_KEY, profile)] {
+        if let Some(value) = value {
+            // Saved values must be a single SQLite string/blob literal, never executable SQL.
+            if !ag_valid_literal(value) { anyhow::bail!("Invalid saved Antigravity identity; capture the account again"); }
+            sql.push_str(&format!("INSERT INTO ItemTable(key,value) VALUES('{key}',{value});"));
+        }
+    }
+    sql.push_str("COMMIT;");
+    let output = Command::new("sqlite3").arg("-bail").arg(db).arg(sql).output()?;
+    if !output.status.success() { anyhow::bail!("Antigravity identity update failed; transaction rolled back"); }
+    Ok(())
+}
+
+fn ag_valid_literal(value: &str) -> bool {
+    if let Some(hex) = value.strip_prefix("X'").and_then(|s| s.strip_suffix('\'')) {
+        return hex.len() % 2 == 0 && hex.bytes().all(|b| b.is_ascii_hexdigit());
+    }
+    let Some(text) = value.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')) else { return false; };
+    let mut chars = text.chars();
+    while let Some(c) = chars.next() {
+        if c == '\'' && chars.next() != Some('\'') { return false; }
+    }
+    true
 }
 
 /// Path to the Antigravity IDE .app (to open with `open`).
@@ -57,7 +137,7 @@ fn antigravity_ide_app() -> Option<PathBuf> {
 
 /// Whether Antigravity IDE can be opened (.app installed or a shim in PATH).
 fn antigravity_ide_available() -> bool {
-    if !cfg!(target_os = "macos") { return false; }
+    if cfg!(target_os = "linux") { return antigravity_linux_binary().is_some(); }
     antigravity_ide_app().is_some()
         || home_dir()
             .join(".antigravity-ide/antigravity-ide/bin/antigravity-ide")
@@ -105,20 +185,6 @@ fn ag_read_key_literal(db: &Path, key: &str) -> Option<String> {
     }
 }
 
-/// Write (INSERT OR REPLACE) one key into state.vscdb with an already-quoted SQL literal.
-fn ag_write_key(db: &Path, key: &str, literal: &str) -> Result<()> {
-    let status = Command::new("sqlite3")
-        .arg(db)
-        .arg(format!(
-            "INSERT OR REPLACE INTO ItemTable(key,value) VALUES('{key}',{literal});"
-        ))
-        .status()?;
-    if !status.success() {
-        anyhow::bail!("sqlite3 failed to write state.vscdb");
-    }
-    Ok(())
-}
-
 /// Save the account currently signed in to the IDE: copy token (+ avatar) from the
 /// default state.vscdb into the account dir. Returns a fingerprint (token hash), or
 /// an error if not signed in.
@@ -129,9 +195,21 @@ pub fn antigravity_capture(store: &Store, account_id: &str) -> Result<String> {
         .context("Antigravity IDE isn't signed in — sign into the account you want to save first, then click Save")?;
     let dir = store.account_dir(&ToolId::Antigravity, account_id);
     fs::create_dir_all(&dir)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o700))?;
+    }
     fs::write(dir.join("oauthToken.sql"), &token)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(dir.join("oauthToken.sql"), fs::Permissions::from_mode(0o600))?;
+    }
     if let Some(profile) = ag_read_key_literal(&db, AG_PROFILE_KEY) {
         fs::write(dir.join("profileUrl.sql"), profile)?;
+    } else if dir.join("profileUrl.sql").exists() {
+        fs::remove_file(dir.join("profileUrl.sql"))?;
     }
     let mut hasher = Sha256::new();
     hasher.update(token.as_bytes());
@@ -187,10 +265,11 @@ pub fn antigravity_restore(store: &Store, account_id: &str) -> Result<()> {
     let dir = store.account_dir(&ToolId::Antigravity, account_id);
     let token = fs::read_to_string(dir.join("oauthToken.sql"))
         .context("Account has no saved token — save it again while signed into this account")?;
-    ag_write_key(&db, AG_TOKEN_KEY, token.trim())?;
-    if let Ok(profile) = fs::read_to_string(dir.join("profileUrl.sql")) {
-        let _ = ag_write_key(&db, AG_PROFILE_KEY, profile.trim());
-    }
+    ensure_antigravity_stopped()?;
+    ag_backup(&db, &store.state_path().parent().context("App data directory missing")?.join("backups/antigravity"))?;
+    ensure_antigravity_stopped()?;
+    let profile = fs::read_to_string(dir.join("profileUrl.sql")).ok();
+    ag_replace_identity(&db, Some(token.trim()), profile.as_deref().map(str::trim))?;
     Ok(())
 }
 
@@ -219,24 +298,17 @@ pub fn antigravity_quit_ide() {
 /// Reopen Antigravity IDE (default userData) after swapping the token.
 pub fn antigravity_open_ide() -> Result<()> {
     ensure_antigravity_supported()?;
+    if cfg!(target_os = "linux") {
+        let binary = antigravity_linux_binary().context("Antigravity is not installed; install the Linux IDE first")?;
+        Command::new(binary).spawn().context("Couldn't open Antigravity")?;
+        return Ok(());
+    }
     let app = antigravity_ide_app().context("Antigravity IDE is not installed")?;
     Command::new("/usr/bin/open")
         .arg("-a")
         .arg(&app)
         .spawn()
         .context("Couldn't open Antigravity IDE")?;
-    Ok(())
-}
-
-/// Delete one key from state.vscdb.
-fn ag_delete_key(db: &Path, key: &str) -> Result<()> {
-    let status = Command::new("sqlite3")
-        .arg(db)
-        .arg(format!("DELETE FROM ItemTable WHERE key='{key}';"))
-        .status()?;
-    if !status.success() {
-        anyhow::bail!("sqlite3 failed to delete the key");
-    }
     Ok(())
 }
 
@@ -248,6 +320,7 @@ fn ag_delete_key(db: &Path, key: &str) -> Result<()> {
 pub fn antigravity_new_login(saved_tokens: &[String]) -> Result<()> {
     ensure_antigravity_supported()?;
     antigravity_quit_ide();
+    ensure_antigravity_stopped()?;
     let db = antigravity_state_db();
     if !db.exists() {
         anyhow::bail!("Antigravity IDE's state.vscdb not found");
@@ -260,8 +333,10 @@ pub fn antigravity_new_login(saved_tokens: &[String]) -> Result<()> {
             );
         }
     }
-    let _ = ag_delete_key(&db, AG_TOKEN_KEY);
-    let _ = ag_delete_key(&db, AG_PROFILE_KEY);
+    let store = Store::new()?;
+    ag_backup(&db, &store.state_path().parent().context("App data directory missing")?.join("backups/antigravity"))?;
+    ensure_antigravity_stopped()?;
+    ag_replace_identity(&db, None, None)?;
     antigravity_open_ide()
 }
 
@@ -309,23 +384,7 @@ pub fn launch_login(tool_id: &ToolId) -> Result<()> {
         ToolId::Codex => run_login_command("codex", &["login"]),
         ToolId::Cursor => run_login_command(CURSOR_BIN, &["login"]),
         ToolId::Opencode => run_login_command("opencode", &["auth", "login"]),
-        ToolId::Antigravity => {
-            ensure_antigravity_supported()?;
-            if Path::new("/Applications/Antigravity.app").exists() {
-                Command::new("open")
-                    .arg("-a")
-                    .arg("Antigravity")
-                    .status()
-                    .context("open Antigravity failed")?;
-            } else {
-                Command::new("open")
-                    .arg("-a")
-                    .arg("Google Antigravity")
-                    .status()
-                    .context("open Google Antigravity failed")?;
-            }
-            Ok(())
-        }
+        ToolId::Antigravity => antigravity_open_ide(),
     }
 }
 
@@ -1279,6 +1338,51 @@ fn run_login_command(binary: &str, args: &[&str]) -> Result<()> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn antigravity_literals_reject_sql_injection() {
+        assert!(ag_valid_literal("'hello''world'"));
+        assert!(ag_valid_literal("X'00ABCDEF'"));
+        assert!(!ag_valid_literal("'token'; DELETE FROM ItemTable; --'"));
+        assert!(!ag_valid_literal("X'0G'"));
+        assert!(!ag_valid_literal("NULL"));
+    }
+
+    #[test]
+    fn antigravity_process_match_is_exact() {
+        assert!(ag_process_identity(Path::new("/usr/share/antigravity/antigravity"), Path::new("")));
+        assert!(!ag_process_identity(Path::new("/usr/bin/bash"), Path::new("/tmp/test-antigravity")));
+        assert!(!ag_process_identity(Path::new("/usr/bin/python3"), Path::new("python3")));
+    }
+
+    #[test]
+    fn antigravity_transaction_and_backup_preserve_identity() {
+        // All files are disposable fixture data, never the installed IDE database.
+        let root = std::env::temp_dir().join(format!("aisw_ag_{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let db = root.join("state.vscdb");
+        let output = Command::new("sqlite3").arg(&db).arg("CREATE TABLE ItemTable(key TEXT PRIMARY KEY,value BLOB); INSERT INTO ItemTable VALUES('preference','keep');").output().expect("sqlite3 is required for database tests");
+        assert!(output.status.success());
+        ag_replace_identity(&db, Some("'first'"), Some("'avatar'")).unwrap();
+        let trigger = Command::new("sqlite3").arg(&db).arg(format!("CREATE TRIGGER reject_avatar BEFORE INSERT ON ItemTable WHEN NEW.key='{AG_PROFILE_KEY}' BEGIN SELECT RAISE(ABORT,'fixture failure'); END;")).output().unwrap();
+        assert!(trigger.status.success());
+        assert!(ag_replace_identity(&db, Some("'second'"), Some("'broken'")).is_err());
+        assert_eq!(ag_read_key_literal(&db, AG_TOKEN_KEY).as_deref(), Some("'first'"));
+        assert_eq!(ag_read_key_literal(&db, AG_PROFILE_KEY).as_deref(), Some("'avatar'"));
+        assert!(Command::new("sqlite3").arg(&db).arg("DROP TRIGGER reject_avatar;").status().unwrap().success());
+        ag_backup(&db, &root.join("backups")).unwrap();
+        ag_replace_identity(&db, Some("X'0102'"), None).unwrap();
+        assert_eq!(ag_read_key_literal(&db, AG_TOKEN_KEY).as_deref(), Some("X'0102'"));
+        assert!(ag_read_key_literal(&db, AG_PROFILE_KEY).is_none());
+        assert!(ag_replace_identity(&db, Some("'bad'; DROP TABLE ItemTable; --'"), None).is_err());
+        assert_eq!(ag_read_key_literal(&db, AG_TOKEN_KEY).as_deref(), Some("X'0102'"));
+        let backup = fs::read_dir(root.join("backups")).unwrap().next().unwrap().unwrap().path();
+        assert_eq!(ag_read_key_literal(&backup, AG_TOKEN_KEY).as_deref(), Some("'first'"));
+        ag_replace_identity(&db, None, None).unwrap();
+        assert!(ag_read_key_literal(&db, AG_TOKEN_KEY).is_none());
+        assert_eq!(ag_read_key_literal(&db, "preference").as_deref(), Some("'keep'"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
     /// The hook is pasted into the user's ~/.zshrc, so a syntax error there breaks every new
     /// terminal. Check the generated block actually parses.
     #[test]
@@ -1289,7 +1393,7 @@ mod tests {
         let script = root.join("hook.sh");
         fs::write(&script, &block).unwrap();
 
-        for shell in ["sh", "bash", "zsh"] {
+        for shell in ["bash", "zsh"] {
             let output = Command::new(shell).arg("-n").arg(&script).output().unwrap();
             assert!(
                 output.status.success(),

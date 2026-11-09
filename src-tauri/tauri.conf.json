@@ -37,6 +37,16 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "publisher": "AI switcher maintainers"
+    "publisher": "AI switcher maintainers",
+    "linux": {
+      "deb": {
+        "depends": [
+          "curl",
+          "sqlite3",
+          "lsof",
+          "x-terminal-emulator"
+        ]
+      }
+    }
   }
 }

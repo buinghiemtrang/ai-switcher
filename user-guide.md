@@ -9,4 +9,4 @@ See [README](README.md) for setup and current verification status.
 5. Additional accounts receive dedicated launcher commands in `~/.local/bin`.
 
 Credentials stay on each employee's computer. Share the application installer, not profile folders.
-Antigravity switching is unavailable on Linux in this preview.
+Antigravity Linux support is experimental: save the signed-in account, close all IDE windows before switching, then let AI switcher reopen it. A private SQLite backup is made before each identity change.

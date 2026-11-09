@@ -2477,7 +2477,8 @@ impl ManagedState {
                 antigravity_quit_ide();
                 antigravity_restore(&self.store, &input.account_id)
                     .context("Failed to switch account — check Antigravity IDE")?;
-                let _ = antigravity_open_ide();
+                antigravity_open_ide()
+                    .context("Account restored, but could not reopen Antigravity IDE")?;
             }
         }
 

@@ -12,7 +12,7 @@ On Ubuntu 24.04 amd64, download the `.deb` from this repository's Releases page,
 sudo apt install ./ai-account-switcher_*.deb
 ```
 
-The Linux adaptation is currently a preview. Antigravity switching is unavailable.
+The Linux adaptation is currently a preview. Antigravity Linux support is experimental; close the IDE before switching accounts.
 For development or when no installer has been released, follow the source-build steps below.
 
 ## Develop on Ubuntu
@@ -21,7 +21,7 @@ Install Node.js 20+, a current stable Rust toolchain, and the native build depen
 
 ```bash
 sudo apt update
-sudo apt install build-essential pkg-config libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev patchelf curl sqlite3
+sudo apt install build-essential pkg-config libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev libdbus-1-dev patchelf curl sqlite3 lsof zsh
 npm ci
 npm run tauri dev
 ```
@@ -45,7 +45,7 @@ The Debian package is written beneath `src-tauri/target/release/bundle/deb/`. Bu
 - Account credentials remain on the user's machine; requests to providers use those credentials.
 - Selecting accounts can install shell hooks in `.bashrc`/`.zshrc` and per-account launchers in `~/.local/bin`.
 - Default CLI profiles and project histories can be shared with managed profiles. Distribute the application package or clean source only, never your app-data folder, account profiles, API keys or CLI credentials.
-- Antigravity account switching is currently unavailable on Linux. CLI login, quota and account switching still require native verification before rollout.
+- Antigravity Linux capture/switching is experimental and requires `sqlite3`. Close all IDE windows before switching or starting a new login; the app backs up the database before changing the token and avatar together. Actual provider login and switching require verification with your installed IDE version before rollout.
 
 ## Network behavior
 
