@@ -1,8 +1,58 @@
 # AI switcher
 
-[📷 Xem ảnh giao diện ứng dụng](PREVIEW.md)
-
 Independent internal desktop build of an AI coding account manager, built with Tauri 2, Rust and React. This workspace targets Ubuntu 24.04 x86_64. Linux support is being adapted and must pass the checks below before distributing it to colleagues.
+
+## Giao diện ứng dụng
+
+Ảnh chụp native trên Ubuntu của đầy đủ 8 tab chính. [Xem thêm các màn hình tính năng và hộp thoại](PREVIEW.md).
+
+### Claude Code
+
+Thẻ tài khoản, quota 5 giờ và quota tuần. Ảnh phản ánh trạng thái CLI trên máy chụp.
+
+![AI switcher — Claude Code](docs/preview/claude.png)
+
+### Codex
+
+Tài khoản đang dùng, hạn mức, thêm tài khoản và làm mới quota.
+
+![AI switcher — Codex](docs/preview/codex.png)
+
+### Cursor CLI
+
+Màn hình quản lý tài khoản Cursor CLI.
+
+![AI switcher — Cursor CLI](docs/preview/cursor.png)
+
+### opencode
+
+Màn hình quản lý tài khoản opencode.
+
+![AI switcher — opencode](docs/preview/opencode.png)
+
+### Antigravity IDE
+
+Màn hình lưu tài khoản và chuyển tài khoản Antigravity. IDE chưa được cài trên máy chụp nên đây là trạng thái chưa có tài khoản.
+
+![AI switcher — Antigravity IDE](docs/preview/antigravity.png)
+
+### API gateway
+
+Cấu hình server local, API key, tài khoản phục vụ và model combo. Ảnh chụp khi server chưa khởi động.
+
+![AI switcher — API gateway](docs/preview/api.png)
+
+### Usage — Overview
+
+Tổng hợp token, biểu đồ sử dụng và chi phí ước tính từ log local.
+
+![AI switcher — Usage — Overview](docs/preview/usage.png)
+
+### Settings
+
+Cấu hình đường dẫn CLI, auto-switch và quota overlay.
+
+![AI switcher — Settings](docs/preview/settings.png)
 
 ## Install from this repository
 
