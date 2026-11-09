@@ -2328,16 +2328,14 @@ mod tests {
 
     #[test]
     fn claude_keychain_suffix_is_sha256_prefix() {
-        // Values verified for real using `security` + sha256 on the machine:
-        //   profile dir namtran → "Claude Code-credentials-e3c60653" (quota read OK)
-        //   temp profile login-test → "Claude Code-credentials-8244da8e"
+        // Fixed synthetic paths verify the SHA-256 prefix without personal data.
         let profile = claude_keychain_suffix(Path::new(
-            "/Users/hoangphan/Library/Application Support/dev.hoangphan.AI-Account-Switcher/accounts/claude/53d79dfb-fbe4-41fb-9827-e8afd2e128bb",
+            "/home/example/.local/share/ai-switcher/accounts/claude/test-profile",
         ));
-        assert_eq!(profile, "e3c60653");
+        assert_eq!(profile, "491b7a0c");
         // Different path → different suffix (each profile has its own separate credential).
-        let other = claude_keychain_suffix(Path::new("/Users/hoangphan/.ai-switcher-logintest"));
-        assert_eq!(other, "8244da8e");
+        let other = claude_keychain_suffix(Path::new("/home/example/.ai-switcher-logintest"));
+        assert_eq!(other, "3c7776df");
         assert_ne!(profile, other);
     }
 

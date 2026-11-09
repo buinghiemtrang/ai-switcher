@@ -67,6 +67,12 @@ impl Store {
         let dirs = ProjectDirs::from("internal", "ai-switcher", "ai-switcher")
             .context("Couldn't determine the app data directory")?;
         let root = dirs.data_local_dir().to_path_buf();
+        fs::create_dir_all(&root)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&root, fs::Permissions::from_mode(0o700))?;
+        }
         fs::create_dir_all(root.join("accounts"))?;
         fs::create_dir_all(root.join("backups"))?;
         // Best-effort cleanup of files the removed auto-session-prime feature left behind. Deleting
@@ -136,6 +142,11 @@ impl Store {
         let path = self.state_path();
         let tmp = path.with_extension("json.tmp");
         fs::write(&tmp, serde_json::to_vec_pretty(state)?)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&tmp, fs::Permissions::from_mode(0o600))?;
+        }
         fs::rename(tmp, path)?;
         Ok(())
     }
@@ -165,5 +176,20 @@ pub fn normalize_account_states(
         } else {
             account.state.clone()
         };
+    }
+}
+
+#[cfg(all(test, unix))]
+mod permission_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn saved_state_is_private() {
+        let root = std::env::temp_dir().join(format!("ai-switcher-store-{}", uuid::Uuid::new_v4()));
+        let store = Store::for_test(root.clone()).unwrap();
+        store.save(&StoredState::default()).unwrap();
+        assert_eq!(fs::metadata(store.state_path()).unwrap().permissions().mode() & 0o777, 0o600);
+        fs::remove_dir_all(root).unwrap();
     }
 }
