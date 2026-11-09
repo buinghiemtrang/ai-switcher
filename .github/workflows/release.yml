@@ -33,13 +33,33 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential pkg-config libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev libdbus-1-dev patchelf sqlite3 lsof zsh
       - run: npm ci
+      - run: node tests/installer.test.cjs
       - run: npm run build
       - run: cargo test --manifest-path src-tauri/Cargo.toml
       - run: npm run tauri build -- --bundles deb
+      - name: Prepare installer checksums
+        run: |
+          python3 - <<'PYTHON'
+          from pathlib import Path
+          import hashlib
+          root = Path('src-tauri/target/release/bundle/deb')
+          packages = sorted(root.glob('*.deb'))
+          if not packages:
+              raise SystemExit('No Debian installer was built')
+          lines = []
+          for package in packages:
+              target = package.with_name(package.name.replace(' ', '.'))
+              if target != package:
+                  package.rename(target)
+              lines.append(hashlib.sha256(target.read_bytes()).hexdigest() + '  ' + target.name)
+          (root / 'SHA256SUMS').write_text('\n'.join(lines) + '\n')
+          PYTHON
       - uses: actions/upload-artifact@v4
         with:
           name: ai-switcher-ubuntu-24.04-amd64
-          path: src-tauri/target/release/bundle/deb/*.deb
+          path: |
+            src-tauri/target/release/bundle/deb/*.deb
+            src-tauri/target/release/bundle/deb/SHA256SUMS
           if-no-files-found: error
 
   release:
@@ -60,4 +80,4 @@ jobs:
           RELEASE_TAG: ${{ inputs.release_tag }}
           RELEASE_SHA: ${{ github.sha }}
         run: |
-          gh release create "$RELEASE_TAG" packages/*.deb --target "$RELEASE_SHA" --title "AI switcher $RELEASE_TAG" --notes "Ubuntu 24.04 amd64 preview. See README for support and verification limits." --prerelease
+          gh release create "$RELEASE_TAG" packages/*.deb packages/SHA256SUMS --target "$RELEASE_SHA" --title "AI switcher $RELEASE_TAG" --notes "Ubuntu 24.04 amd64 preview. See README for support and verification limits." --prerelease

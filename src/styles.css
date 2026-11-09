@@ -979,6 +979,28 @@ button.danger:hover:not(:disabled) {
   grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
 }
 
+.allAccountsDescription {
+  color: var(--text-3);
+  font-size: 12px;
+  margin: 7px 0 0;
+}
+
+.allAccountsGrid {
+  align-items: start;
+}
+
+.allAccountItem {
+  display: grid;
+  gap: 9px;
+  min-width: 0;
+}
+
+.allAccountTool {
+  justify-self: start;
+  font-size: 12px;
+  padding: 4px 9px;
+}
+
 .account {
   background: var(--surface);
   border: 1px solid var(--line);

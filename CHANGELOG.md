@@ -1,5 +1,12 @@
 # AI switcher changes
 
+## 0.12.1 Linux preview
+
+- Added the All tab for Claude Code, Codex and Antigravity account quotas.
+- Hidden Cursor CLI and opencode from the interface.
+- Added a GitHub-backed npx installer with checksum verification.
+- Simplified README into npx and Debian installer options; moved developer instructions to DEVELOPMENT.md.
+
 ## 0.12.0 Linux adaptation (preview)
 
 - Independent app identity and local storage.

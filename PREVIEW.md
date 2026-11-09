@@ -98,6 +98,6 @@ Màn hình nhận diện và chọn đường dẫn binary/config, minh họa b�
 
 ## Tải và cài đặt
 
-[Tải Linux preview](https://github.com/buinghiemtrang/ai-switcher/releases/tag/v0.12.0-linux.1) · [Hướng dẫn cài đặt và phát triển](README.md)
+[Tải Linux preview](https://github.com/buinghiemtrang/ai-switcher/releases/tag/v0.12.1-linux.1) · [Hướng dẫn cài đặt và phát triển](README.md)
 
 Chi phí hiển thị là ước tính của ứng dụng, không phải hóa đơn nhà cung cấp. Antigravity Linux hiện là tính năng thử nghiệm; luồng đăng nhập và chuyển tài khoản thật cần được kiểm chứng với phiên bản IDE đang sử dụng.

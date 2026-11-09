@@ -111,6 +111,12 @@ const toolDescriptions: Record<ToolId, string> = {
     "Save Antigravity IDE login sessions to switch between them. Click Use: the app quits the IDE, loads that account's token, then reopens the IDE.",
 };
 
+const visibleToolIds: ToolId[] = ["claude", "codex", "antigravity"];
+
+function isVisibleTool(tool: ToolStatus) {
+  return visibleToolIds.includes(tool.id);
+}
+
 const emptySnapshot: AppSnapshot = {
   tools: [],
   disclaimerAccepted: true,
@@ -154,7 +160,7 @@ export function App() {
     setSnapshot(next);
   }, []);
   const [selectedTool, setSelectedTool] = useState<ToolId>("claude");
-  const [view, setView] = useState<"accounts" | "api" | "usage" | "settings">("accounts");
+  const [view, setView] = useState<"all" | "accounts" | "api" | "usage" | "settings">("all");
   // One unified notification channel for the whole app: success + error both render as a
   // top-right toast (see the Toasts renderer). `notify` is the single entry point.
   const [toasts, setToasts] = useState<
@@ -327,7 +333,7 @@ export function App() {
   useEffect(() => {
     if (!snapshot.disclaimerAccepted || dialog) return;
     const needsSetup = snapshot.tools.find(
-      (tool) => tool.id !== "antigravity" && tool.installed && !snapshot.toolSetups[tool.id] && !setupPrompted.has(tool.id),
+      (tool) => isVisibleTool(tool) && tool.id !== "antigravity" && tool.installed && !snapshot.toolSetups[tool.id] && !setupPrompted.has(tool.id),
     );
     if (!needsSetup) return;
     setSelectedTool(needsSetup.id);
@@ -336,8 +342,12 @@ export function App() {
   }, [dialog, setupPrompted, snapshot]);
 
   const currentTool = useMemo(
-    () => snapshot.tools.find((tool) => tool.id === selectedTool) ?? snapshot.tools[0],
+    () => snapshot.tools.find((tool) => tool.id === selectedTool) ?? snapshot.tools.find(isVisibleTool),
     [selectedTool, snapshot.tools],
+  );
+  const visibleTools = snapshot.tools.filter(isVisibleTool);
+  const allAccounts = visibleTools.flatMap((tool) =>
+    tool.accounts.filter((account) => !account.hidden).map((account) => ({ tool, account })),
   );
   const visibleAccounts = currentTool?.accounts.filter((account) => !account.hidden) ?? [];
   const hiddenAccounts = currentTool?.accounts.filter((account) => account.hidden) ?? [];
@@ -459,6 +469,99 @@ export function App() {
         : `Selected ${account.name}. A new terminal running \`${tool.id}\` uses it right away; in an open terminal run \`aisw\` to sync.`,
     );
 
+  const refreshAll = () => {
+    for (const { tool, account } of allAccounts) {
+      if (account.state !== "needs-login" && !account.apiProvider) {
+        void refreshOneAccount(tool.id, account.id);
+      }
+    }
+  };
+
+  const renderAccountCard = (tool: ToolStatus, account: Account) => (
+    <AccountCard
+      key={account.id}
+      account={account}
+      tool={tool}
+      busy={busy}
+      onPrimeNow={async () => {
+        setBusy(`prime:${account.id}`);
+        setError(null);
+        try {
+          const res = await api.primeNow({
+            toolId: tool.id,
+            accountId: account.id,
+          });
+          // "pending" = the prime runs in the background; keep the spinner and wait for
+          // the `prime-now-done` event to clear it + toast the final result. Any other
+          // kind is a synchronous outcome (early reject / headless): toast + clear now.
+          if (res.kind === "pending") {
+            notify(res.message, "info");
+            return;
+          }
+          // Pass the backend's kind straight through: "success" (new window), "info"
+          // (window still running — a Hold, neutral, not an error), "error" (failure).
+          notify(res.message, res.kind);
+          setBusy(null);
+        } catch (err) {
+          notify(errorMessage(err), "error");
+          setBusy(null);
+        }
+      }}
+      onSwitch={() => switchAccount(tool, account)}
+      onRename={() => {
+        setSelectedTool(tool.id);
+        setSelectedAccount(account);
+        setDialog("rename");
+      }}
+      onSetLauncher={() => {
+        setSelectedTool(tool.id);
+        setSelectedAccount(account);
+        setDialog("launcher");
+      }}
+      onWeeklyLock={() => {
+        setSelectedTool(tool.id);
+        setSelectedAccount(account);
+        setDialog("weeklyLock");
+      }}
+      onUnlock={() =>
+        run(
+          `unlock-${account.id}`,
+          () =>
+            api.setWeeklyLock({
+              toolId: tool.id,
+              accountId: account.id,
+              enabled: false,
+              threshold: account.weeklyLock?.threshold ?? 80,
+            }),
+          `Unlocked: ${account.name} — auto-lock stays off until you turn it back on`,
+        )
+      }
+      onCopy={async (text) => {
+        const ok = await copyToClipboard(text);
+        notify(ok ? `Copied: ${text}` : "Couldn't access the clipboard.", ok ? "success" : "error");
+      }}
+      onHide={() =>
+        run(
+          `hide-${account.id}`,
+          () =>
+            api.setAccountHidden({
+              toolId: tool.id,
+              accountId: account.id,
+              hidden: true,
+            }),
+          `Hidden: ${account.name}`,
+        )
+      }
+      onDelete={() =>
+        run("delete", () => api.deleteAccount(tool.id, account.id))
+      }
+      onRefreshQuota={() => void refreshOneAccount(tool.id, account.id)}
+      refreshingQuota={refreshingAccounts.has(account.id)}
+      onRefreshToken={() => void refreshTokenForAccount(tool.id, account.id)}
+      refreshingToken={refreshingTokens.has(account.id)}
+    />
+  );
+
   return (
     <main className="shell">
       <header className="topbar" data-tauri-drag-region />
@@ -509,7 +612,14 @@ export function App() {
       <div className="workspace">
         <aside className="sidebar">
           <div className="sidebarNav">
-            {snapshot.tools.map((tool) => (
+            <button
+              className={`toolTab ${view === "all" ? "selected" : ""}`}
+              onClick={() => setView("all")}
+            >
+              <span className="usageTabLabel"><Users /> All</span>
+              <small>All accounts &amp; quota</small>
+            </button>
+            {visibleTools.map((tool) => (
               <button
                 className={`toolTab ${view === "accounts" && tool.id === selectedTool ? "selected" : ""}`}
                 key={tool.id}
@@ -637,6 +747,49 @@ export function App() {
           />
         )}
 
+        {view === "all" && (
+          <section className="panel">
+            <div className="panelHead">
+              <div>
+                <div className="titleRow">
+                  <h2>All accounts</h2>
+                  <span className="status muted">{allAccounts.length} accounts</span>
+                </div>
+                <p className="allAccountsDescription">Claude Code, Codex and Antigravity accounts with their latest quota.</p>
+              </div>
+              <div className="actions">
+                <button onClick={refreshAll} disabled={busy !== null || refreshingAccounts.size > 0 || allAccounts.length === 0}>
+                  {refreshingAccounts.size > 0 ? <Loader2 className="spin" /> : <RefreshCw />}
+                  Refresh all quota
+                </button>
+              </div>
+            </div>
+            {switchNotice && (
+              <div className="drift">
+                <CircleHelp />
+                <span>{switchNotice}</span>
+                <button className="iconButton" onClick={() => setSwitchNotice(null)} title="Dismiss"><X /></button>
+              </div>
+            )}
+            <div className="accountGrid allAccountsGrid">
+              {allAccounts.length === 0 ? (
+                <div className="empty">
+                  <KeyRound />
+                  <strong>No accounts yet</strong>
+                  <span>Open a tool tab to add an account.</span>
+                </div>
+              ) : allAccounts.map(({ tool, account }) => (
+                <div className="allAccountItem" key={`${tool.id}:${account.id}`}>
+                  <button className="allAccountTool" onClick={() => { setSelectedTool(tool.id); setView("accounts"); }}>
+                    {tool.name}
+                  </button>
+                  {renderAccountCard(tool, account)}
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
         {view === "accounts" && currentTool && (
           <section className="panel">
             <div className="panelHead">
@@ -716,87 +869,7 @@ export function App() {
                   <span>Click Add account to log in a new account (each account gets its own command).</span>
                 </div>
               ) : (
-                visibleAccounts.map((account) => (
-                  <AccountCard
-                    key={account.id}
-                    account={account}
-                    tool={currentTool}
-                    busy={busy}
-                    onPrimeNow={async () => {
-                      setBusy(`prime:${account.id}`);
-                      setError(null);
-                      try {
-                        const res = await api.primeNow({
-                          toolId: currentTool.id,
-                          accountId: account.id,
-                        });
-                        // "pending" = the prime runs in the background; keep the spinner and wait for
-                        // the `prime-now-done` event to clear it + toast the final result. Any other
-                        // kind is a synchronous outcome (early reject / headless): toast + clear now.
-                        if (res.kind === "pending") {
-                          notify(res.message, "info");
-                          return;
-                        }
-                        // Pass the backend's kind straight through: "success" (new window), "info"
-                        // (window still running — a Hold, neutral, not an error), "error" (failure).
-                        notify(res.message, res.kind);
-                        setBusy(null);
-                      } catch (err) {
-                        notify(errorMessage(err), "error");
-                        setBusy(null);
-                      }
-                    }}
-                    onSwitch={() => switchAccount(currentTool, account)}
-                    onRename={() => {
-                      setSelectedAccount(account);
-                      setDialog("rename");
-                    }}
-                    onSetLauncher={() => {
-                      setSelectedAccount(account);
-                      setDialog("launcher");
-                    }}
-                    onWeeklyLock={() => {
-                      setSelectedAccount(account);
-                      setDialog("weeklyLock");
-                    }}
-                    onUnlock={() =>
-                      run(
-                        `unlock-${account.id}`,
-                        () =>
-                          api.setWeeklyLock({
-                            toolId: currentTool.id,
-                            accountId: account.id,
-                            enabled: false,
-                            threshold: account.weeklyLock?.threshold ?? 80,
-                          }),
-                        `Unlocked: ${account.name} — auto-lock stays off until you turn it back on`,
-                      )
-                    }
-                    onCopy={async (text) => {
-                      const ok = await copyToClipboard(text);
-                      notify(ok ? `Copied: ${text}` : "Couldn't access the clipboard.", ok ? "success" : "error");
-                    }}
-                    onHide={() =>
-                      run(
-                        `hide-${account.id}`,
-                        () =>
-                          api.setAccountHidden({
-                            toolId: currentTool.id,
-                            accountId: account.id,
-                            hidden: true,
-                          }),
-                        `Hidden: ${account.name}`,
-                      )
-                    }
-                    onDelete={() =>
-                      run("delete", () => api.deleteAccount(currentTool.id, account.id))
-                    }
-                    onRefreshQuota={() => void refreshOneAccount(currentTool.id, account.id)}
-                    refreshingQuota={refreshingAccounts.has(account.id)}
-                    onRefreshToken={() => void refreshTokenForAccount(currentTool.id, account.id)}
-                    refreshingToken={refreshingTokens.has(account.id)}
-                  />
-                ))
+                visibleAccounts.map((account) => renderAccountCard(currentTool, account))
               )}
             </div>
             {hiddenAccounts.length > 0 && (
@@ -971,7 +1044,7 @@ function SettingsView({
   onSetup: (toolId: ToolId) => void;
   onAutoSwitchChange: (toolId: ToolId, enabled: boolean, threshold: number) => void;
 }) {
-  const cliTools = snapshot.tools.filter((tool) => tool.id !== "antigravity");
+  const cliTools = snapshot.tools.filter((tool) => isVisibleTool(tool) && tool.id !== "antigravity");
   // Auto-switch reacts to a 5-hour window running out — only Claude and Codex have one.
   const autoSwitchTools = cliTools.filter((tool) => tool.id === "claude" || tool.id === "codex");
   const [wakeHelperInstalled, setWakeHelperInstalled] = useState(false);
@@ -1166,7 +1239,7 @@ function OverlaySettingsBar({
   if (!settings) return null;
 
   const picked = new Set(settings.accounts);
-  const rows = snapshot.tools.flatMap((tool) =>
+  const rows = snapshot.tools.filter(isVisibleTool).flatMap((tool) =>
     tool.accounts
       .filter((account) => !account.hidden)
       .map((account) => ({
