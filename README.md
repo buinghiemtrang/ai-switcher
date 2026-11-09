@@ -9,13 +9,21 @@ A downloadable installer is available only after a successful build is published
 On Ubuntu 24.04 amd64, download the `.deb` from this repository's Releases page, then run:
 
 ```bash
-sudo apt install ./ai-account-switcher_*.deb
+sudo apt install "./AI switcher_0.12.0_amd64.deb"
 ```
 
 The Linux adaptation is currently a preview. Antigravity Linux support is experimental; close the IDE before switching accounts.
 For development or when no installer has been released, follow the source-build steps below.
 
 ## Develop on Ubuntu
+
+Clone your repository first (private access requires GitHub authentication):
+
+```bash
+git clone https://github.com/buinghiemtrang/ai-switcher.git
+cd ai-switcher
+```
+
 
 Install Node.js 20+, a current stable Rust toolchain, and the native build dependencies:
 
@@ -64,3 +72,7 @@ Before a rollout, verify startup, CLI detection, login, quota refresh, account s
 ## License
 
 This fork retains the original MIT license and copyright notice in [LICENSE](LICENSE). Keep that file with source distributions and substantial copies of the software.
+
+## Verification of Linux preview
+
+Commit `39eed0b` passed the frontend build, all 112 Rust tests, and Ubuntu Debian packaging in GitHub Actions run `42605079746`. The native application was started on the development desktop with no startup error in the captured log. Actual UI interactions and real provider authentication/account switching still require testing, especially Antigravity with the installed IDE version. The installer includes the MIT notice at `/usr/share/doc/ai-switcher/copyright`.

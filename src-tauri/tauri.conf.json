@@ -45,8 +45,12 @@
           "sqlite3",
           "lsof",
           "x-terminal-emulator"
-        ]
+        ],
+        "files": {
+          "/usr/share/doc/ai-switcher/copyright": "../LICENSE"
+        }
       }
-    }
+    },
+    "licenseFile": "../LICENSE"
   }
 }
