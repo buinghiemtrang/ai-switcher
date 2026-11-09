@@ -1,0 +1,768 @@
+import { invoke as tauriInvoke } from "@tauri-apps/api/core";
+import type {
+  AddAccountInput,
+  AddApiAccountInput,
+  ApiUsageReport,
+  AppSnapshot,
+  DetectionReport,
+  RenameAccountInput,
+  CreateApiGatewayKeyInput,
+  CreateApiGatewayKeyResult,
+  CreateVirtualApiAccountInput,
+  OrphanAccountDir,
+  OverlaySettings,
+  SystemLoad,
+  PrimeNowInput,
+  PrimeNowResult,
+  RateLimitResetCredits,
+  SaveApiGatewayComboInput,
+  SetApiGatewayAccountInput,
+  SetLauncherInput,
+  SetAccountHiddenInput,
+  SetWeeklyLockInput,
+  SetToolSetupInput,
+  StartApiGatewayInput,
+  SwitchAccountInput,
+  ToolId,
+  UsageReport,
+} from "./types";
+
+const isTauri = "__TAURI_INTERNALS__" in window;
+
+const quota = (
+  five: number | null,
+  week: number | null,
+  error: string | null = null,
+  rateLimitResetCredits?: RateLimitResetCredits,
+  plan?: string,
+) => ({
+  fiveHour: { label: "5-hour limit", percentUsed: five, resetAt: "2026-05-31T15:30:00Z" },
+  weekly: { label: "Weekly limit", percentUsed: week, resetAt: "2026-06-02T00:00:00Z" },
+  rateLimitResetCredits,
+  plan,
+  updatedAt: "2026-05-31T08:00:00Z",
+  error,
+});
+
+const demoResetCredits: RateLimitResetCredits = {
+  availableCount: 3,
+  credits: [
+    {
+      status: "available",
+      resetType: "codex_rate_limits",
+      title: "Full reset (Weekly + 5 hr)",
+      grantedAt: "2026-06-18T00:05:36Z",
+      expiresAt: "2026-07-18T00:05:36Z",
+    },
+    {
+      status: "available",
+      resetType: "codex_rate_limits",
+      title: "Full reset (Weekly + 5 hr)",
+      grantedAt: "2026-06-26T23:02:11Z",
+      expiresAt: "2026-07-26T23:02:11Z",
+    },
+    {
+      status: "available",
+      resetType: "codex_rate_limits",
+      title: "Full reset (Weekly + 5 hr)",
+      grantedAt: "2026-07-01T19:46:23Z",
+      expiresAt: "2026-07-31T19:46:23Z",
+    },
+  ],
+};
+
+const demoOverlaySettings: OverlaySettings = {
+  enabled: false,
+  accounts: [],
+  opacity: 0.45,
+  hoverOpacity: 1,
+  compact: false,
+  clickThrough: false,
+  showSystem: true,
+  rect: { x: 40, y: 60, width: 288, height: 330 },
+};
+
+const demoSnapshot: AppSnapshot = {
+  disclaimerAccepted: false,
+  autoSwitch: false,
+  autoSwitchThreshold: 100,
+  autoSwitchSettings: {
+    claude: { enabled: false, threshold: 100 },
+    codex: { enabled: true, threshold: 95 },
+  },
+  toolSetups: {
+    claude: {
+      binaryPath: "/Users/demo/.local/bin/claude",
+      defaultConfigDir: "/Users/demo/.claude",
+      binarySource: "path",
+      configSource: "default",
+      validatedAt: "2026-06-08T10:00:00Z",
+      validationWarnings: [],
+    },
+    codex: {
+      binaryPath: "/opt/homebrew/bin/codex",
+      defaultConfigDir: "/Users/demo/.codex",
+      binarySource: "path",
+      configSource: "default",
+      validatedAt: "2026-06-08T10:00:00Z",
+      validationWarnings: [],
+    },
+  },
+  apiGateway: {
+    config: {
+      bindHost: "127.0.0.1",
+      port: 8783,
+      quotaThreshold: 95,
+      maxRetries: 3,
+      rotationStrategy: "roundRobin",
+      keys: [],
+      combos: [],
+      accounts: [],
+      modelRegistry: [],
+      virtualClaudeEnabled: false,
+      virtualCodexEnabled: false,
+    },
+    status: { state: "stopped", baseUrl: "http://127.0.0.1:8783", error: null },
+  },
+  tools: [
+    {
+      id: "claude",
+      name: "Claude Code",
+      installed: true,
+      activeAccountId: "c2",
+      accounts: [
+        {
+          id: "default-claude", toolId: "claude", name: "Machine default", state: "idle",
+          fingerprint: "default", createdAt: "2026-05-20T10:00:00Z", updatedAt: "2026-05-31T08:00:00Z",
+          lastUsedAt: null, quota: quota(32, 18, null, undefined, "Max 5x"), launcherCommand: null, isDefault: true,
+        },
+        {
+          id: "c2", toolId: "claude", name: "Work", state: "active", fingerprint: "profile:c2",
+          createdAt: "2026-05-21T10:00:00Z", updatedAt: "2026-05-30T08:00:00Z",
+          lastUsedAt: "2026-05-29T19:10:00Z", quota: quota(82, 70, null, undefined, "Team Max 5x"),
+          launcherCommand: "claude-work", isDefault: false,
+        },
+        {
+          id: "c3", toolId: "claude", name: "Client", state: "exhausted", fingerprint: "profile:c3",
+          createdAt: "2026-05-22T10:00:00Z", updatedAt: "2026-05-31T06:00:00Z",
+          lastUsedAt: "2026-05-31T05:00:00Z", quota: quota(100, 96, null, undefined, "Pro"),
+          launcherCommand: "claude-client", isDefault: false,
+        },
+      ],
+    },
+    {
+      id: "codex",
+      name: "Codex",
+      installed: true,
+      activeAccountId: null,
+      accounts: [
+        {
+          id: "default-codex", toolId: "codex", name: "Machine default", state: "idle",
+          fingerprint: "default", createdAt: "2026-05-18T10:00:00Z", updatedAt: "2026-05-31T08:00:00Z",
+          lastUsedAt: null, quota: quota(40, 55, null, demoResetCredits), launcherCommand: null, isDefault: true,
+        },
+        {
+          id: "x2", toolId: "codex", name: "Pro 6x", state: "needs-login", fingerprint: "profile:x2",
+          createdAt: "2026-05-19T10:00:00Z", updatedAt: "2026-05-31T08:00:00Z",
+          lastUsedAt: null, quota: quota(null, null, "Waiting for login in Terminal"),
+          launcherCommand: "codex-pro6", isDefault: false,
+        },
+      ],
+    },
+    {
+      id: "cursor",
+      name: "Cursor CLI",
+      installed: true,
+      activeAccountId: "cur1",
+      accounts: [
+        {
+          id: "default-cursor", toolId: "cursor", name: "Machine default", state: "idle",
+          fingerprint: "default", createdAt: "2026-08-27T10:00:00Z", updatedAt: "2026-09-10T08:00:00Z",
+          lastUsedAt: null, launcherCommand: null, isDefault: true,
+          quota: {
+            fiveHour: { label: "Included usage", percentUsed: 35, resetAt: "2026-09-27T17:05:49Z" },
+            weekly: { label: "Billing cycle", percentUsed: null, resetAt: "2026-09-27T17:05:49Z" },
+            models: [
+              { label: "Included usage", percentUsed: 35, resetAt: "2026-09-27T17:05:49Z" },
+              { label: "Auto models", percentUsed: 29, resetAt: "2026-09-27T17:05:49Z" },
+              { label: "External models (API)", percentUsed: 100, resetAt: "2026-09-27T17:05:49Z" },
+            ],
+            plan: "Pro+", updatedAt: "2026-09-10T08:00:00Z", error: null,
+          },
+        },
+        {
+          id: "cur1", toolId: "cursor", name: "Work", state: "active",
+          fingerprint: "profile:cur1", createdAt: "2026-09-01T10:00:00Z", updatedAt: "2026-09-10T08:00:00Z",
+          lastUsedAt: "2026-09-10T07:00:00Z", launcherCommand: "cursor-agent-work", isDefault: false,
+          quota: {
+            fiveHour: { label: "Included usage", percentUsed: 12, resetAt: "2026-09-30T00:00:00Z" },
+            weekly: { label: "Billing cycle", percentUsed: null, resetAt: "2026-09-30T00:00:00Z" },
+            models: [
+              { label: "Included usage", percentUsed: 12, resetAt: "2026-09-30T00:00:00Z" },
+              { label: "Auto models", percentUsed: 15, resetAt: "2026-09-30T00:00:00Z" },
+              { label: "External models (API)", percentUsed: 4, resetAt: "2026-09-30T00:00:00Z" },
+            ],
+            plan: "Pro", updatedAt: "2026-09-10T08:00:00Z", error: null,
+          },
+        },
+      ],
+    },
+    {
+      id: "opencode",
+      name: "opencode",
+      installed: true,
+      activeAccountId: "default-opencode",
+      accounts: [
+        {
+          id: "default-opencode", toolId: "opencode", name: "Machine default", state: "active",
+          fingerprint: "default", createdAt: "2026-08-27T10:00:00Z", updatedAt: "2026-09-10T08:00:00Z",
+          lastUsedAt: null, launcherCommand: null, isDefault: true,
+          quota: {
+            fiveHour: { label: "Rolling", percentUsed: 12, resetAt: "2026-09-10T11:26:40Z" },
+            weekly: { label: "Weekly", percentUsed: 34, resetAt: "2026-09-14T00:00:00Z" },
+            models: [
+              { label: "Rolling", percentUsed: 12, resetAt: "2026-09-10T11:26:40Z" },
+              { label: "Weekly", percentUsed: 34, resetAt: "2026-09-14T00:00:00Z" },
+              { label: "Monthly", percentUsed: 56, resetAt: "2026-10-07T14:01:45Z" },
+            ],
+            plan: "Go", updatedAt: "2026-09-10T08:00:00Z", error: null,
+          },
+        },
+      ],
+    },
+    {
+      id: "antigravity",
+      name: "Antigravity",
+      installed: false,
+      activeAccountId: null,
+      accounts: [],
+    },
+  ],
+};
+
+const tb = (input: number, output: number, cacheRead: number, cacheCreation = 0) => ({
+  input,
+  output,
+  cacheRead,
+  cacheCreation,
+});
+
+const demoUsage: UsageReport = {
+  generatedAt: "2026-06-02T08:00:00Z",
+  priceStatus: "live",
+  priceUpdatedAt: "2026-06-02T00:00:00Z",
+  tools: [
+    {
+      toolId: "claude",
+      displayName: "Claude Code",
+      estimate: true,
+      unpricedModels: [],
+      total: tb(120_000, 480_000, 5_200_000, 1_300_000),
+      totalCostUsd: 12.84,
+      today: tb(8_000, 32_000, 410_000, 95_000),
+      todayCostUsd: 1.12,
+      daily: [
+        { date: "2026-05-28", tokens: tb(20000, 80000, 900000, 210000), costUsd: 2.1 },
+        { date: "2026-05-29", tokens: tb(15000, 60000, 700000, 160000), costUsd: 1.6 },
+        { date: "2026-05-30", tokens: tb(31000, 120000, 1300000, 320000), costUsd: 3.2 },
+        { date: "2026-05-31", tokens: tb(26000, 96000, 1100000, 260000), costUsd: 2.7 },
+        { date: "2026-06-01", tokens: tb(20000, 92000, 790000, 255000), costUsd: 2.12 },
+        { date: "2026-06-02", tokens: tb(8000, 32000, 410000, 95000), costUsd: 1.12 },
+      ],
+      byModel: [
+        { model: "claude-opus-4-8", tokens: tb(70000, 300000, 3200000, 800000), costUsd: 9.1 },
+        { model: "claude-sonnet-4-5", tokens: tb(50000, 180000, 2000000, 500000), costUsd: 3.74 },
+      ],
+      sessions: [
+        { id: "7e5d3164", date: "2026-06-02", model: "claude-opus-4-8", tokens: tb(8000, 32000, 410000, 95000), costUsd: 1.12 },
+        { id: "a1b2c3d4", date: "2026-06-01", model: "claude-sonnet-4-5", tokens: tb(12000, 40000, 380000, 120000), costUsd: 0.95 },
+      ],
+      projects: [
+        { path: "/Volumes/Data/Git/ai-switcher", tokens: tb(90000, 360000, 3900000, 950000), costUsd: 9.74, sessionCount: 12, lastActive: "2026-06-02", daily: [{ date: "2026-06-01", tokens: tb(82000, 328000, 3490000, 855000), costUsd: 8.62 }, { date: "2026-06-02", tokens: tb(8000, 32000, 410000, 95000), costUsd: 1.12 }], byModel: [{ model: "claude-opus-4-8", tokens: tb(90000, 360000, 3900000, 950000), costUsd: 9.74 }], sessions: [{ id: "7e5d3164", date: "2026-06-02", model: "claude-opus-4-8", tokens: tb(8000, 32000, 410000, 95000), costUsd: 1.12 }] },
+        { path: "/Volumes/Data/Git/reqwise", tokens: tb(30000, 120000, 1300000, 350000), costUsd: 3.1, sessionCount: 4, lastActive: "2026-06-01", daily: [{ date: "2026-06-01", tokens: tb(30000, 120000, 1300000, 350000), costUsd: 3.1 }], byModel: [{ model: "claude-sonnet-4-5", tokens: tb(30000, 120000, 1300000, 350000), costUsd: 3.1 }], sessions: [] },
+      ],
+      accounts: [
+        {
+          orgUuid: "da624f70-8b1e-4c3a-9f2d-1e2a3b4c5d6e",
+          label: "work@example.com",
+          accountNames: ["Work"],
+          removed: false,
+          tokens: tb(70000, 290000, 3200000, 780000),
+          costUsd: 7.9,
+          sessionCount: 9,
+          lastActive: "2026-06-02",
+          daily: [
+            { date: "2026-05-30", tokens: tb(20000, 80000, 900000, 220000), costUsd: 2.2 },
+            { date: "2026-05-31", tokens: tb(18000, 72000, 800000, 210000), costUsd: 2.0 },
+            { date: "2026-06-01", tokens: tb(16000, 78000, 700000, 200000), costUsd: 1.9 },
+            { date: "2026-06-02", tokens: tb(16000, 60000, 800000, 150000), costUsd: 1.8 },
+          ],
+          byModel: [
+            { model: "claude-opus-4-8", tokens: tb(70000, 290000, 3200000, 780000), costUsd: 7.9 },
+          ],
+          sessions: [
+            { id: "7e5d3164", date: "2026-06-02", model: "claude-opus-4-8", tokens: tb(8000, 32000, 410000, 95000), costUsd: 1.12 },
+            { id: "b2c9f011", date: "2026-06-01", model: "claude-opus-4-8", tokens: tb(16000, 78000, 700000, 200000), costUsd: 1.9 },
+          ],
+          projects: [
+            { path: "/Volumes/Data/Git/ai-switcher", tokens: tb(40000, 170000, 1900000, 470000), costUsd: 4.6, sessionCount: 6, lastActive: "2026-06-02", daily: [{ date: "2026-06-01", tokens: tb(24000, 110000, 1100000, 320000), costUsd: 3.0 }, { date: "2026-06-02", tokens: tb(16000, 60000, 800000, 150000), costUsd: 1.6 }], byModel: [{ model: "claude-opus-4-8", tokens: tb(40000, 170000, 1900000, 470000), costUsd: 4.6 }], sessions: [{ id: "7e5d3164", date: "2026-06-02", model: "claude-opus-4-8", tokens: tb(8000, 32000, 410000, 95000), costUsd: 1.12 }] },
+            { path: "/Volumes/Data/Git/reqwise", tokens: tb(30000, 120000, 1300000, 310000), costUsd: 3.3, sessionCount: 3, lastActive: "2026-06-01", daily: [{ date: "2026-05-30", tokens: tb(14000, 42000, 600000, 110000), costUsd: 1.5 }, { date: "2026-05-31", tokens: tb(8000, 36000, 300000, 90000), costUsd: 0.9 }, { date: "2026-06-01", tokens: tb(8000, 42000, 400000, 110000), costUsd: 0.9 }], byModel: [{ model: "claude-opus-4-8", tokens: tb(30000, 120000, 1300000, 310000), costUsd: 3.3 }], sessions: [{ id: "b2c9f011", date: "2026-06-01", model: "claude-opus-4-8", tokens: tb(16000, 78000, 700000, 200000), costUsd: 1.9 }] },
+          ],
+        },
+        {
+          orgUuid: "3f8a1c55-2d7b-4e90-a6c1-9d8e7f6a5b4c",
+          label: "personal@example.com",
+          accountNames: ["Machine default"],
+          removed: false,
+          tokens: tb(30000, 130000, 1500000, 380000),
+          costUsd: 3.6,
+          sessionCount: 4,
+          lastActive: "2026-06-01",
+          daily: [
+            { date: "2026-05-29", tokens: tb(10000, 40000, 500000, 110000), costUsd: 1.1 },
+            { date: "2026-05-30", tokens: tb(8000, 30000, 300000, 80000), costUsd: 0.8 },
+            { date: "2026-06-01", tokens: tb(12000, 60000, 700000, 190000), costUsd: 1.7 },
+          ],
+          byModel: [
+            { model: "claude-sonnet-4-5", tokens: tb(30000, 130000, 1500000, 380000), costUsd: 3.6 },
+          ],
+          sessions: [
+            { id: "a1b2c3d4", date: "2026-06-01", model: "claude-sonnet-4-5", tokens: tb(12000, 40000, 380000, 120000), costUsd: 0.95 },
+          ],
+          projects: [
+            { path: "/Volumes/Data/Git/ai-switcher", tokens: tb(18000, 72000, 820000, 195000), costUsd: 1.9, sessionCount: 2, lastActive: "2026-06-01", daily: [{ date: "2026-05-30", tokens: tb(6000, 32000, 320000, 85000), costUsd: 0.9 }, { date: "2026-06-01", tokens: tb(12000, 40000, 500000, 110000), costUsd: 1.0 }], byModel: [{ model: "claude-sonnet-4-5", tokens: tb(18000, 72000, 820000, 195000), costUsd: 1.9 }], sessions: [{ id: "a1b2c3d4", date: "2026-06-01", model: "claude-sonnet-4-5", tokens: tb(12000, 40000, 380000, 120000), costUsd: 0.95 }] },
+            { path: "/Users/demo/Git/homelab", tokens: tb(12000, 58000, 680000, 185000), costUsd: 1.7, sessionCount: 2, lastActive: "2026-05-29", daily: [{ date: "2026-05-29", tokens: tb(10000, 40000, 500000, 110000), costUsd: 1.1 }, { date: "2026-05-31", tokens: tb(2000, 18000, 180000, 75000), costUsd: 0.6 }], byModel: [{ model: "claude-sonnet-4-5", tokens: tb(12000, 58000, 680000, 185000), costUsd: 1.7 }], sessions: [] },
+          ],
+        },
+        {
+          orgUuid: "9c01f3ab-6e42-4b8d-b7a5-3c2d1e0f9a8b",
+          label: "client@agency.io",
+          accountNames: ["Client"],
+          removed: true,
+          tokens: tb(15000, 45000, 400000, 110000),
+          costUsd: 1.0,
+          sessionCount: 2,
+          lastActive: "2026-05-28",
+          daily: [
+            { date: "2026-05-28", tokens: tb(15000, 45000, 400000, 110000), costUsd: 1.0 },
+          ],
+          byModel: [
+            { model: "claude-opus-4-8", tokens: tb(15000, 45000, 400000, 110000), costUsd: 1.0 },
+          ],
+          sessions: [
+            { id: "c4d5e6f7", date: "2026-05-28", model: "claude-opus-4-8", tokens: tb(11000, 33000, 290000, 80000), costUsd: 0.74 },
+            { id: "d8e9f0a1", date: "2026-05-28", model: "claude-opus-4-8", tokens: tb(4000, 12000, 110000, 30000), costUsd: 0.26 },
+          ],
+          projects: [
+            { path: "/Volumes/Data/Git/client-portal", tokens: tb(11000, 33000, 290000, 80000), costUsd: 0.74, sessionCount: 1, lastActive: "2026-05-28", daily: [{ date: "2026-05-28", tokens: tb(11000, 33000, 290000, 80000), costUsd: 0.74 }], byModel: [{ model: "claude-opus-4-8", tokens: tb(11000, 33000, 290000, 80000), costUsd: 0.74 }], sessions: [{ id: "c4d5e6f7", date: "2026-05-28", model: "claude-opus-4-8", tokens: tb(11000, 33000, 290000, 80000), costUsd: 0.74 }] },
+            { path: "/Volumes/Data/Git/agency-site", tokens: tb(4000, 12000, 110000, 30000), costUsd: 0.26, sessionCount: 1, lastActive: "2026-05-28", daily: [{ date: "2026-05-28", tokens: tb(4000, 12000, 110000, 30000), costUsd: 0.26 }], byModel: [{ model: "claude-opus-4-8", tokens: tb(4000, 12000, 110000, 30000), costUsd: 0.26 }], sessions: [{ id: "d8e9f0a1", date: "2026-05-28", model: "claude-opus-4-8", tokens: tb(4000, 12000, 110000, 30000), costUsd: 0.26 }] },
+          ],
+        },
+        {
+          orgUuid: "",
+          label: "Unattributed",
+          accountNames: [],
+          removed: false,
+          tokens: tb(5000, 15000, 100000, 30000),
+          costUsd: 0.34,
+          sessionCount: 3,
+          lastActive: "2026-05-29",
+          daily: [
+            { date: "2026-05-28", tokens: tb(3000, 9000, 60000, 18000), costUsd: 0.2 },
+            { date: "2026-05-29", tokens: tb(2000, 6000, 40000, 12000), costUsd: 0.14 },
+          ],
+          byModel: [
+            { model: "claude-sonnet-4-5", tokens: tb(5000, 15000, 100000, 30000), costUsd: 0.34 },
+          ],
+          sessions: [
+            { id: "9f8e7d6c", date: "2026-05-29", model: "claude-sonnet-4-5", tokens: tb(2000, 6000, 40000, 12000), costUsd: 0.14 },
+          ],
+          projects: [
+            { path: "/Users/demo/Git/scratchpad", tokens: tb(3000, 9000, 60000, 18000), costUsd: 0.2, sessionCount: 2, lastActive: "2026-05-28", daily: [{ date: "2026-05-28", tokens: tb(3000, 9000, 60000, 18000), costUsd: 0.2 }], byModel: [{ model: "claude-sonnet-4-5", tokens: tb(3000, 9000, 60000, 18000), costUsd: 0.2 }], sessions: [] },
+            { path: "/Volumes/Data/Git/reqwise", tokens: tb(2000, 6000, 40000, 12000), costUsd: 0.14, sessionCount: 1, lastActive: "2026-05-29", daily: [{ date: "2026-05-29", tokens: tb(2000, 6000, 40000, 12000), costUsd: 0.14 }], byModel: [{ model: "claude-sonnet-4-5", tokens: tb(2000, 6000, 40000, 12000), costUsd: 0.14 }], sessions: [{ id: "9f8e7d6c", date: "2026-05-29", model: "claude-sonnet-4-5", tokens: tb(2000, 6000, 40000, 12000), costUsd: 0.14 }] },
+          ],
+        },
+      ],
+    },
+    {
+      toolId: "codex",
+      displayName: "Codex",
+      estimate: false,
+      unpricedModels: [],
+      total: tb(900_000, 240_000, 3_100_000, 0),
+      totalCostUsd: 6.42,
+      today: tb(60_000, 18_000, 210_000, 0),
+      todayCostUsd: 0.51,
+      daily: [
+        { date: "2026-05-29", tokens: tb(160000, 42000, 560000, 0), costUsd: 1.1 },
+        { date: "2026-05-30", tokens: tb(220000, 60000, 780000, 0), costUsd: 1.6 },
+        { date: "2026-05-31", tokens: tb(180000, 48000, 640000, 0), costUsd: 1.3 },
+        { date: "2026-06-01", tokens: tb(280000, 72000, 910000, 0), costUsd: 1.91 },
+        { date: "2026-06-02", tokens: tb(60000, 18000, 210000, 0), costUsd: 0.51 },
+      ],
+      byModel: [
+        { model: "gpt-5.5", tokens: tb(700000, 190000, 2400000, 0), costUsd: 5.0 },
+        { model: "gpt-5", tokens: tb(200000, 50000, 700000, 0), costUsd: 1.42 },
+      ],
+      sessions: [
+        { id: "019e887b", date: "2026-06-02", model: "gpt-5.5", tokens: tb(60000, 18000, 210000, 0), costUsd: 0.51 },
+      ],
+      projects: [
+        { path: "/Volumes/Data/Git/ai-switcher", tokens: tb(650000, 180000, 2300000, 0), costUsd: 4.9, sessionCount: 8, lastActive: "2026-06-02", daily: [{ date: "2026-06-02", tokens: tb(650000, 180000, 2300000, 0), costUsd: 4.9 }], byModel: [{ model: "gpt-5.5", tokens: tb(650000, 180000, 2300000, 0), costUsd: 4.9 }], sessions: [{ id: "019e887b", date: "2026-06-02", model: "gpt-5.5", tokens: tb(60000, 18000, 210000, 0), costUsd: 0.51 }] },
+        { path: "/Volumes/Data/Git/reqwise", tokens: tb(250000, 60000, 800000, 0), costUsd: 1.52, sessionCount: 3, lastActive: "2026-06-01", daily: [{ date: "2026-06-01", tokens: tb(250000, 60000, 800000, 0), costUsd: 1.52 }], byModel: [{ model: "gpt-5", tokens: tb(250000, 60000, 800000, 0), costUsd: 1.52 }], sessions: [] },
+      ],
+      accounts: [],
+    },
+  ],
+};
+
+const demoApiUsage: ApiUsageReport = {
+  generatedAt: "2026-06-14T09:00:00Z",
+  totalRequests: 0,
+  total: tb(0, 0, 0, 0),
+  rows: [],
+};
+
+async function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+  if (isTauri) {
+    return tauriInvoke<T>(command, args);
+  }
+
+  await new Promise((resolve) => window.setTimeout(resolve, 120));
+  if (command === "load_snapshot" || command === "get_snapshot" || command === "refresh_tool") {
+    return structuredClone(demoSnapshot) as T;
+  }
+  if (
+    command === "get_overlay_settings" ||
+    command === "set_overlay_settings" ||
+    command === "set_overlay_enabled"
+  ) {
+    return structuredClone({ ...demoOverlaySettings, ...(args?.input as object | undefined) }) as T;
+  }
+  if (command === "get_system_load") {
+    const gb = 1024 ** 3;
+    return {
+      cpuPercent: 46,
+      cores: 12,
+      loadOne: 2.6,
+      memoryUsed: 5.64 * gb,
+      memoryTotal: 24 * gb,
+      swapUsed: 0,
+      topMemory: { name: "1DevTool", memory: 3.2 * gb, cpuPercent: 18 },
+      topCpu: { name: "node", memory: 0.4 * gb, cpuPercent: 85 },
+    } as T;
+  }
+  if (command === "prime_now") {
+    return { kind: "success", message: "Đã mở phiên mới — reset lúc 12:00" } as T;
+  }
+  if (command === "refresh_token_now") {
+    return { kind: "success", message: "Token đã sẵn sàng. Đang cập nhật lại quota…" } as T;
+  }
+  if (command === "list_orphan_account_dirs") {
+    return [] as T;
+  }
+  if (command === "delete_orphan_account_dir") {
+    return undefined as T;
+  }
+  if (command === "open_auto_prime_log" || command === "open_auto_prime_log_folder") {
+    return undefined as T;
+  }
+  if (command === "wake_helper_status" || command === "uninstall_wake_helper") {
+    return false as T;
+  }
+  if (command === "get_usage") {
+    return structuredClone(demoUsage) as T;
+  }
+  if (command === "get_api_usage") {
+    return structuredClone(demoApiUsage) as T;
+  }
+  if (command === "fetch_gateway_models") {
+    return [
+      "cx/gpt-5.5-codex",
+      "cx/gpt-5.5-codex-high",
+      "cx/gpt-5.4",
+      "kr/claude-sonnet-4.5",
+      "gc/gemini-3-pro-preview",
+    ] as T;
+  }
+  if (command === "detect_tool_setup" || command === "validate_tool_setup") {
+    const toolId = (args?.toolId ?? (args?.input as { toolId?: ToolId } | undefined)?.toolId ?? "claude") as ToolId;
+    const setup = demoSnapshot.toolSetups[toolId];
+    return {
+      toolId,
+      configCandidates: setup?.defaultConfigDir
+        ? [{
+            path: setup.defaultConfigDir,
+            source: setup.configSource,
+            score: 10,
+            valid: true,
+            isAppManaged: false,
+            evidence: [{ label: "demo", found: true }],
+            warnings: [],
+          }]
+        : [],
+      binaryCandidates: setup?.binaryPath
+        ? [{
+            path: setup.binaryPath,
+            resolvedPath: setup.binaryPath,
+            source: setup.binarySource,
+            score: 10,
+            valid: true,
+            isAppLauncher: false,
+            evidence: [{ label: "demo", found: true }],
+            warnings: [],
+          }]
+        : [],
+      resolution: { kind: "resolved", setup, reason: "Demo setup" },
+    } as T;
+  }
+  if (command === "set_tool_setup") {
+    const input = args?.input as SetToolSetupInput;
+    demoSnapshot.toolSetups[input.toolId] = {
+      binaryPath: input.binaryPath,
+      defaultConfigDir: input.defaultConfigDir,
+      binarySource: "manual",
+      configSource: "manual",
+      validatedAt: new Date().toISOString(),
+      validationWarnings: [],
+    };
+    return structuredClone(demoSnapshot) as T;
+  }
+  if (command === "set_auto_switch_setting") {
+    const toolId = args?.toolId as ToolId;
+    demoSnapshot.autoSwitchSettings[toolId] = {
+      enabled: Boolean(args?.enabled),
+      threshold: Number(args?.threshold ?? 100),
+    };
+    demoSnapshot.autoSwitch = Object.values(demoSnapshot.autoSwitchSettings).some((setting) => setting.enabled);
+    demoSnapshot.autoSwitchThreshold = demoSnapshot.autoSwitchSettings[toolId].threshold;
+    return structuredClone(demoSnapshot) as T;
+  }
+  if (command === "set_auto_switch") {
+    const enabled = Boolean(args?.enabled);
+    const threshold = Number(args?.threshold ?? 100);
+    demoSnapshot.autoSwitch = enabled;
+    demoSnapshot.autoSwitchThreshold = threshold;
+    demoSnapshot.autoSwitchSettings.claude = { enabled, threshold };
+    demoSnapshot.autoSwitchSettings.codex = { enabled, threshold };
+    return structuredClone(demoSnapshot) as T;
+  }
+  if (command === "start_api_gateway") {
+    const input = args?.input as StartApiGatewayInput;
+    demoSnapshot.apiGateway.config.bindHost = input.bindHost;
+    demoSnapshot.apiGateway.config.port = input.port;
+    demoSnapshot.apiGateway.config.quotaThreshold = input.quotaThreshold;
+    demoSnapshot.apiGateway.config.rotationStrategy = input.rotationStrategy;
+    demoSnapshot.apiGateway.status = {
+      state: "running",
+      baseUrl: `http://${input.bindHost}:${input.port}`,
+      error: null,
+    };
+    return structuredClone(demoSnapshot) as T;
+  }
+  if (command === "stop_api_gateway") {
+    demoSnapshot.apiGateway.status.state = "stopped";
+    return structuredClone(demoSnapshot) as T;
+  }
+  if (command === "create_api_gateway_key") {
+    const input = args?.input as CreateApiGatewayKeyInput;
+    const secret = `sk-demo-${Math.random().toString(16).slice(2)}${Date.now()}`;
+    demoSnapshot.apiGateway.config.keys.push({
+      id: crypto.randomUUID(),
+      name: input.name || "Default key",
+      prefix: `sk-...${secret.slice(-6)}`,
+      enabled: true,
+      expiresAt: input.expiresAt,
+      createdAt: new Date().toISOString(),
+    });
+    return { snapshot: structuredClone(demoSnapshot), secret } as T;
+  }
+  if (command === "delete_api_gateway_key") {
+    const keyId = (args?.input as { keyId: string }).keyId;
+    demoSnapshot.apiGateway.config.keys = demoSnapshot.apiGateway.config.keys.filter((key) => key.id !== keyId);
+    return structuredClone(demoSnapshot) as T;
+  }
+  if (command === "reveal_api_gateway_key") {
+    return ("sk-demo-revealed-key") as T;
+  }
+  if (command === "save_api_gateway_combo") {
+    const input = args?.input as SaveApiGatewayComboInput;
+    const id = input.id || crypto.randomUUID();
+    const existing = demoSnapshot.apiGateway.config.combos.findIndex((combo) => combo.id === id);
+    const combo = {
+      id,
+      name: input.name,
+      members: input.members,
+      strategy: input.strategy ?? null,
+      enabled: existing >= 0 ? demoSnapshot.apiGateway.config.combos[existing].enabled : true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    if (existing >= 0) demoSnapshot.apiGateway.config.combos[existing] = combo;
+    else demoSnapshot.apiGateway.config.combos.push(combo);
+    return structuredClone(demoSnapshot) as T;
+  }
+  if (command === "delete_api_gateway_combo") {
+    const comboId = (args?.input as { comboId: string }).comboId;
+    demoSnapshot.apiGateway.config.combos = demoSnapshot.apiGateway.config.combos.filter(
+      (combo) => combo.id !== comboId,
+    );
+    return structuredClone(demoSnapshot) as T;
+  }
+  if (command === "set_api_gateway_account") {
+    const input = args?.input as SetApiGatewayAccountInput;
+    const entry = demoSnapshot.apiGateway.config.accounts.find(
+      (account) => account.toolId === input.toolId && account.accountId === input.accountId,
+    );
+    if (entry) entry.enabled = input.enabled;
+    else
+      demoSnapshot.apiGateway.config.accounts.push({
+        toolId: input.toolId,
+        accountId: input.accountId,
+        enabled: input.enabled,
+        state: "available",
+      });
+    return structuredClone(demoSnapshot) as T;
+  }
+  if (command === "refresh_api_gateway_models") {
+    return structuredClone(demoSnapshot) as T;
+  }
+  if (command === "create_virtual_api_account") {
+    const input = args?.input as CreateVirtualApiAccountInput;
+    const tool = demoSnapshot.tools.find((item) => item.id === input.toolId);
+    if (tool && !tool.accounts.some((account) => account.fingerprint === "api-local")) {
+      tool.accounts.push({
+        id: crypto.randomUUID(),
+        toolId: input.toolId,
+        name: input.toolId === "claude" ? "claude-api" : "codex-api",
+        state: "idle",
+        fingerprint: "api-local",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        lastUsedAt: null,
+        quota: null,
+        launcherCommand: null,
+        isDefault: false,
+        apiProvider: {
+          baseUrl: demoSnapshot.apiGateway.status.baseUrl,
+          model:
+            input.model ||
+            demoSnapshot.apiGateway.config.combos[0]?.name ||
+            "local-subscription",
+          bypass: false,
+        },
+      });
+    }
+    return structuredClone(demoSnapshot) as T;
+  }
+  if (command === "add_api_account") {
+    return structuredClone(demoSnapshot) as T;
+  }
+  if (command === "set_account_hidden") {
+    const input = args?.input as SetAccountHiddenInput | undefined;
+    if (input) {
+      for (const tool of demoSnapshot.tools) {
+        if (tool.id !== input.toolId) continue;
+        const account = tool.accounts.find((item) => item.id === input.accountId);
+        if (!account || account.isDefault) continue;
+        account.hidden = input.hidden;
+        if (input.hidden && tool.activeAccountId === account.id) {
+          account.state = account.state === "needs-login" ? "needs-login" : "idle";
+          const fallback = tool.accounts.find((item) => item.isDefault && !item.hidden);
+          tool.activeAccountId = fallback?.id ?? null;
+          if (fallback) fallback.state = "active";
+        }
+      }
+    }
+    return structuredClone(demoSnapshot) as T;
+  }
+  if (command === "set_weekly_lock") {
+    const input = args?.input as SetWeeklyLockInput | undefined;
+    const tool = demoSnapshot.tools.find((item) => item.id === input?.toolId);
+    const account = tool?.accounts.find((item) => item.id === input?.accountId);
+    if (input && tool && account && !account.isDefault) {
+      const weekly = account.quota?.weekly.percentUsed ?? null;
+      const locked = input.enabled && weekly !== null && weekly >= input.threshold;
+      account.weeklyLock = { enabled: input.enabled, threshold: input.threshold, locked };
+      if (locked && tool.activeAccountId === account.id) {
+        const fallback = tool.accounts.find((item) => item.isDefault);
+        account.state = "idle";
+        tool.activeAccountId = fallback?.id ?? null;
+        if (fallback) fallback.state = "active";
+      }
+    }
+    return structuredClone(demoSnapshot) as T;
+  }
+  if (command === "accept_disclaimer") {
+    demoSnapshot.disclaimerAccepted = true;
+    return structuredClone(demoSnapshot) as T;
+  }
+  throw new Error("Desktop commands only run inside the Tauri app");
+}
+
+export const api = {
+  loadSnapshot: () => invoke<AppSnapshot>("load_snapshot"),
+  /** Cached snapshot without the pending-login recheck — for the overlay's polling. */
+  getSnapshot: () => invoke<AppSnapshot>("get_snapshot"),
+  getSystemLoad: () => invoke<SystemLoad>("get_system_load"),
+  getOverlaySettings: () => invoke<OverlaySettings>("get_overlay_settings"),
+  setOverlaySettings: (input: OverlaySettings) =>
+    invoke<OverlaySettings>("set_overlay_settings", { input }),
+  setOverlayEnabled: (enabled: boolean) =>
+    invoke<OverlaySettings>("set_overlay_enabled", { enabled }),
+  refreshTool: (toolId: ToolId) => invoke<AppSnapshot>("refresh_tool", { toolId }),
+  refreshAccount: (toolId: ToolId, accountId: string) =>
+    invoke<AppSnapshot>("refresh_account", { toolId, accountId }),
+  addAccount: (input: AddAccountInput) => invoke<AppSnapshot>("add_account", { input }),
+  addApiAccount: (input: AddApiAccountInput) => invoke<AppSnapshot>("add_api_account", { input }),
+  fetchGatewayModels: (baseUrl: string, apiKey: string) =>
+    invoke<string[]>("fetch_gateway_models", { baseUrl, apiKey }),
+  renameAccount: (input: RenameAccountInput) => invoke<AppSnapshot>("rename_account", { input }),
+  switchAccount: (input: SwitchAccountInput) => invoke<AppSnapshot>("switch_account", { input }),
+  setLauncher: (input: SetLauncherInput) => invoke<AppSnapshot>("set_launcher", { input }),
+  setAccountHidden: (input: SetAccountHiddenInput) =>
+    invoke<AppSnapshot>("set_account_hidden", { input }),
+  setWeeklyLock: (input: SetWeeklyLockInput) => invoke<AppSnapshot>("set_weekly_lock", { input }),
+  deleteAccount: (toolId: ToolId, accountId: string) =>
+    invoke<AppSnapshot>("delete_account", { toolId, accountId }),
+  acceptDisclaimer: () => invoke<AppSnapshot>("accept_disclaimer"),
+  antigravityNewLogin: () => invoke<AppSnapshot>("antigravity_new_login"),
+  setAutoSwitch: (enabled: boolean, threshold: number) =>
+    invoke<AppSnapshot>("set_auto_switch", { enabled, threshold }),
+  setAutoSwitchSetting: (toolId: ToolId, enabled: boolean, threshold: number) =>
+    invoke<AppSnapshot>("set_auto_switch_setting", { toolId, enabled, threshold }),
+  detectToolSetup: (toolId: ToolId) => invoke<DetectionReport>("detect_tool_setup", { toolId }),
+  validateToolSetup: (input: SetToolSetupInput) =>
+    invoke<DetectionReport>("validate_tool_setup", { input }),
+  setToolSetup: (input: SetToolSetupInput) => invoke<AppSnapshot>("set_tool_setup", { input }),
+  getUsage: (rangeDays: number) => invoke<UsageReport>("get_usage", { rangeDays }),
+  getApiUsage: () => invoke<ApiUsageReport>("get_api_usage"),
+  startApiGateway: (input: StartApiGatewayInput) =>
+    invoke<AppSnapshot>("start_api_gateway", { input }),
+  stopApiGateway: () => invoke<AppSnapshot>("stop_api_gateway"),
+  createApiGatewayKey: (input: CreateApiGatewayKeyInput) =>
+    invoke<CreateApiGatewayKeyResult>("create_api_gateway_key", { input }),
+  deleteApiGatewayKey: (keyId: string) =>
+    invoke<AppSnapshot>("delete_api_gateway_key", { input: { keyId } }),
+  revealApiGatewayKey: (keyId: string) => invoke<string>("reveal_api_gateway_key", { keyId }),
+  saveApiGatewayCombo: (input: SaveApiGatewayComboInput) =>
+    invoke<AppSnapshot>("save_api_gateway_combo", { input }),
+  deleteApiGatewayCombo: (comboId: string) =>
+    invoke<AppSnapshot>("delete_api_gateway_combo", { input: { comboId } }),
+  setApiGatewayAccount: (input: SetApiGatewayAccountInput) =>
+    invoke<AppSnapshot>("set_api_gateway_account", { input }),
+  refreshApiGatewayModels: () => invoke<AppSnapshot>("refresh_api_gateway_models"),
+  createVirtualApiAccount: (toolId: ToolId, model?: string) =>
+    invoke<AppSnapshot>("create_virtual_api_account", { input: { toolId, model: model ?? null } }),
+  /** On-demand prime; resolves to a short status message (the snapshot refreshes via event). */
+  primeNow: (input: PrimeNowInput) => invoke<PrimeNowResult>("prime_now", { input }),
+  /** On-demand Claude OAuth token renewal for an account whose quota read 401'd. */
+  refreshTokenNow: (input: PrimeNowInput) => invoke<PrimeNowResult>("refresh_token_now", { input }),
+  listOrphanAccountDirs: () => invoke<OrphanAccountDir[]>("list_orphan_account_dirs"),
+  deleteOrphanAccountDir: (toolId: ToolId, id: string) =>
+    invoke<void>("delete_orphan_account_dir", { toolId, id }),
+  openAutoPrimeLog: () => invoke<void>("open_auto_prime_log"),
+  openAutoPrimeLogFolder: () => invoke<void>("open_auto_prime_log_folder"),
+  wakeHelperStatus: () => invoke<boolean>("wake_helper_status"),
+  uninstallWakeHelper: () => invoke<boolean>("uninstall_wake_helper"),
+};

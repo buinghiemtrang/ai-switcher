@@ -1,0 +1,343 @@
+//! macOS menu-bar (tray) icon + native dropdown menu for quick account switching.
+//!
+//! Native `NSMenu` only renders text + a checkmark (no custom bars/badges). The active
+//! account uses a real native checkmark (CheckMenuItem, kept enabled so it isn't greyed
+//! out); every row trails its quota + plan as `· 96% · Plus`. Tools are grouped under a
+//! disabled header with separators between them.
+//!
+//! Claude Code + Codex only (Antigravity switching restarts the IDE — too heavy here).
+//! Rebuilt from a fresh snapshot whenever the app state changes via `rebuild`.
+
+use crate::app_state::ManagedState;
+use crate::models::{Account, AccountState, AppSnapshot, SwitchAccountInput, ToolId, ToolStatus};
+use tauri::menu::{CheckMenuItem, Menu, MenuId, MenuItem, PredefinedMenuItem, Submenu};
+use tauri::tray::TrayIconBuilder;
+use tauri::{AppHandle, Emitter, Manager, Wry};
+use tauri_plugin_notification::NotificationExt;
+
+/// Tools shown in the tray, in order. Antigravity is intentionally excluded (switching it
+/// restarts the IDE — too heavy for a menu-bar click).
+const TRAY_TOOLS: [ToolId; 4] = [
+    ToolId::Claude,
+    ToolId::Codex,
+    ToolId::Cursor,
+    ToolId::Opencode,
+];
+
+const SWITCH_PREFIX: &str = "switch:";
+const REFRESH_PREFIX: &str = "refresh:";
+const OVERLAY_ID: &str = "tray:overlay";
+const OPEN_ID: &str = "tray:open";
+const QUIT_ID: &str = "tray:quit";
+
+/// Creates the tray icon once at startup.
+pub fn create(app: &AppHandle) -> tauri::Result<()> {
+    let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/tray-icon.png"))?;
+    let snapshot = app.state::<ManagedState>().snapshot().ok();
+    let menu = build_menu(app, snapshot.as_ref())?;
+
+    let _tray = TrayIconBuilder::with_id("main-tray")
+        .icon(icon)
+        // Monochrome template — macOS recolours it per theme (white in dark menu bar) and
+        // brightens it when the menu is open, matching the system icons (wifi/clock).
+        .icon_as_template(true)
+        .tooltip("AI switcher")
+        .menu(&menu)
+        .show_menu_on_left_click(true)
+        .on_menu_event(handle_menu_event)
+        .build(app)?;
+    Ok(())
+}
+
+/// Rebuilds the menu from the current snapshot so checkmarks + quota stay in sync.
+pub fn rebuild(app: &AppHandle) {
+    let Some(tray) = app.tray_by_id("main-tray") else {
+        return;
+    };
+    let snapshot = app.state::<ManagedState>().snapshot().ok();
+    if let Ok(menu) = build_menu(app, snapshot.as_ref()) {
+        let _ = tray.set_menu(Some(menu));
+    }
+}
+
+fn build_menu(app: &AppHandle, snapshot: Option<&AppSnapshot>) -> tauri::Result<Menu<Wry>> {
+    let menu = Menu::new(app)?;
+
+    if let Some(snapshot) = snapshot {
+        let mut any_tool = false;
+        let mut installed_tools = Vec::new();
+        for tool_id in TRAY_TOOLS {
+            let Some(tool) = snapshot.tools.iter().find(|t| t.id == tool_id) else {
+                continue;
+            };
+            if !tool.installed {
+                continue;
+            }
+            installed_tools.push(tool_id.clone());
+            if any_tool {
+                menu.append(&PredefinedMenuItem::separator(app)?)?;
+            }
+            any_tool = true;
+            append_tool_section(app, &menu, tool)?;
+        }
+        if any_tool {
+            menu.append(&PredefinedMenuItem::separator(app)?)?;
+            append_refresh_section(app, &menu, &installed_tools)?;
+            menu.append(&PredefinedMenuItem::separator(app)?)?;
+        }
+    }
+
+    // Floating quota overlay on/off, checked when the window is up.
+    let overlay_on = app
+        .state::<ManagedState>()
+        .overlay_settings()
+        .map(|settings| settings.enabled)
+        .unwrap_or(false);
+    menu.append(&CheckMenuItem::with_id(
+        app,
+        OVERLAY_ID,
+        "Quota overlay",
+        true,
+        overlay_on,
+        None::<&str>,
+    )?)?;
+    menu.append(&PredefinedMenuItem::separator(app)?)?;
+    menu.append(&MenuItem::with_id(
+        app,
+        OPEN_ID,
+        "Open AI Switcher…",
+        true,
+        None::<&str>,
+    )?)?;
+    menu.append(&MenuItem::with_id(
+        app,
+        QUIT_ID,
+        "Quit",
+        true,
+        Some("Cmd+Q"),
+    )?)?;
+    Ok(menu)
+}
+
+/// Parse the `<tool>` part of a tray menu id back into the tool it names.
+fn tray_tool_from_str(value: &str) -> Option<ToolId> {
+    TRAY_TOOLS
+        .iter()
+        .find(|tool_id| tool_id.as_str() == value)
+        .cloned()
+}
+
+fn append_refresh_section(
+    app: &AppHandle,
+    menu: &Menu<Wry>,
+    installed_tools: &[ToolId],
+) -> tauri::Result<()> {
+    let refresh_menu = Submenu::with_id(app, "refresh:menu", "Refresh Quotas", true)?;
+
+    for tool_id in TRAY_TOOLS {
+        if !installed_tools.contains(&tool_id) {
+            continue;
+        }
+        refresh_menu.append(&MenuItem::with_id(
+            app,
+            format!("{REFRESH_PREFIX}{}", tool_id.as_str()),
+            tool_id.display_name(),
+            true,
+            None::<&str>,
+        )?)?;
+    }
+    if installed_tools.len() > 1 {
+        refresh_menu.append(&PredefinedMenuItem::separator(app)?)?;
+        refresh_menu.append(&MenuItem::with_id(
+            app,
+            "refresh:all",
+            "All",
+            true,
+            None::<&str>,
+        )?)?;
+    }
+
+    menu.append(&refresh_menu)
+}
+
+fn append_tool_section(app: &AppHandle, menu: &Menu<Wry>, tool: &ToolStatus) -> tauri::Result<()> {
+    // Bold-ish tool header as a disabled row.
+    menu.append(&MenuItem::with_id(
+        app,
+        format!("header:{}", tool.id.as_str()),
+        tool.name.clone(),
+        false,
+        None::<&str>,
+    )?)?;
+
+    if tool.accounts.is_empty() {
+        menu.append(&MenuItem::with_id(
+            app,
+            format!("empty:{}", tool.id.as_str()),
+            "   No accounts",
+            false,
+            None::<&str>,
+        )?)?;
+        return Ok(());
+    }
+
+    for account in &tool.accounts {
+        if account.hidden {
+            continue;
+        }
+        let is_active = Some(account.id.as_str()) == tool.active_account_id.as_deref()
+            || account.state == AccountState::Active;
+        let needs_login = account.state == AccountState::NeedsLogin;
+        let locked = account.is_locked();
+        let id = format!("{SWITCH_PREFIX}{}:{}", tool.id.as_str(), account.id);
+        let label = account_label(account);
+
+        if is_active {
+            // Native checkmark for the account in use. Kept ENABLED so it renders in the
+            // normal (not greyed-out) text colour; clicking it just re-selects the same
+            // account, which is a harmless no-op.
+            menu.append(&CheckMenuItem::with_id(
+                app,
+                id,
+                label,
+                true,
+                true,
+                None::<&str>,
+            )?)?;
+        } else {
+            menu.append(&MenuItem::with_id(
+                app,
+                id,
+                label,
+                !needs_login && !locked,
+                None::<&str>,
+            )?)?;
+        }
+    }
+    Ok(())
+}
+
+/// `Work  ·  96% · Plus` — name trailed by quota + plan (no status emoji).
+fn account_label(account: &Account) -> String {
+    let mut trailer: Vec<String> = Vec::new();
+    if let Some(quota) = &account.quota {
+        if let Some(percent) = quota.five_hour.percent_used {
+            trailer.push(format!("{}%", percent.round() as i64));
+        }
+        if let Some(plan) = &quota.plan {
+            trailer.push(plan.clone());
+        }
+    } else if account.api_provider.is_some() {
+        trailer.push("API".to_string());
+    }
+
+    if account.is_locked() {
+        trailer.push("Locked".to_string());
+    }
+
+    if trailer.is_empty() {
+        account.name.clone()
+    } else {
+        format!("{}  ·  {}", account.name, trailer.join(" · "))
+    }
+}
+
+fn handle_menu_event(app: &AppHandle, event: tauri::menu::MenuEvent) {
+    let id = event.id();
+    match id.as_ref() {
+        OPEN_ID => show_main_window(app),
+        OVERLAY_ID => toggle_overlay(app),
+        QUIT_ID => app.exit(0),
+        other if other.starts_with(SWITCH_PREFIX) => switch_from_id(app, id),
+        other if other.starts_with(REFRESH_PREFIX) => refresh_from_id(app, id),
+        _ => {}
+    }
+}
+
+/// Parses `switch:<tool>:<accountId>` and switches on a worker thread (switching shells
+/// out to the CLI, which must not block the menu event handler).
+fn switch_from_id(app: &AppHandle, id: &MenuId) {
+    let rest = &id.as_ref()[SWITCH_PREFIX.len()..];
+    let Some((tool_str, account_id)) = rest.split_once(':') else {
+        return;
+    };
+    let Some(tool_id) = tray_tool_from_str(tool_str) else {
+        return;
+    };
+    let account_id = account_id.to_string();
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let result = app
+            .state::<ManagedState>()
+            .switch_account(SwitchAccountInput {
+                tool_id,
+                account_id,
+            });
+        if let Ok(snapshot) = result {
+            let _ = app.emit("snapshot-changed", &snapshot);
+        }
+        rebuild(&app);
+    });
+}
+
+/// Parses `refresh:<tool|all>` and refreshes quota on a worker thread so the native
+/// menu event handler stays responsive while quota endpoints are queried.
+fn refresh_from_id(app: &AppHandle, id: &MenuId) {
+    let target = &id.as_ref()[REFRESH_PREFIX.len()..];
+    let tools: Vec<ToolId> = if target == "all" {
+        TRAY_TOOLS.to_vec()
+    } else {
+        match tray_tool_from_str(target) {
+            Some(tool_id) => vec![tool_id],
+            None => return,
+        }
+    };
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let state = app.state::<ManagedState>();
+        let mut latest_snapshot = None;
+        let mut failed = false;
+
+        for tool_id in tools {
+            match state.refresh_tool(tool_id, Some(&app)) {
+                Ok(snapshot) => latest_snapshot = Some(snapshot),
+                Err(_) => failed = true,
+            }
+        }
+
+        if let Some(snapshot) = latest_snapshot {
+            let _ = app.emit("snapshot-changed", &snapshot);
+        }
+        if failed {
+            let _ = app
+                .notification()
+                .builder()
+                .title("Refresh failed")
+                .body("Could not refresh one or more quota reports.")
+                .show();
+        }
+        rebuild(&app);
+    });
+}
+
+/// Tray toggle for the floating quota overlay. Persists the new state so it survives a restart,
+/// then rebuilds the menu so the checkmark matches.
+fn toggle_overlay(app: &AppHandle) {
+    let state = app.state::<ManagedState>();
+    let enabled = state
+        .overlay_settings()
+        .map(|settings| settings.enabled)
+        .unwrap_or(false);
+    if let Ok(settings) = state.set_overlay_enabled(!enabled) {
+        crate::overlay::apply(app, &settings);
+    }
+    rebuild(app);
+}
+
+fn show_main_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+}

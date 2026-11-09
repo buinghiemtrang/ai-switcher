@@ -1,0 +1,1112 @@
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ToolId {
+    Claude,
+    Codex,
+    Cursor,
+    Opencode,
+    Antigravity,
+}
+
+impl ToolId {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ToolId::Claude => "claude",
+            ToolId::Codex => "codex",
+            ToolId::Cursor => "cursor",
+            ToolId::Opencode => "opencode",
+            ToolId::Antigravity => "antigravity",
+        }
+    }
+
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            ToolId::Claude => "Claude Code",
+            ToolId::Codex => "Codex",
+            ToolId::Cursor => "Cursor CLI",
+            ToolId::Opencode => "opencode",
+            ToolId::Antigravity => "Antigravity IDE",
+        }
+    }
+
+    /// Short label used in auto-prime log/notification lines (matches the brainstorm wording).
+    pub fn prime_label(&self) -> &'static str {
+        match self {
+            ToolId::Claude => "Claude",
+            ToolId::Codex => "Codex",
+            ToolId::Cursor => "Cursor",
+            ToolId::Opencode => "opencode",
+            ToolId::Antigravity => "Antigravity",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum AccountState {
+    Idle,
+    Active,
+    Exhausted,
+    NeedsLogin,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ApiGatewayServerState {
+    Stopped,
+    Running,
+    Errored,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ApiPoolAccountState {
+    Available,
+    Exhausted,
+    CoolingDown,
+    Errored,
+    Excluded,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ApiRotationStrategy {
+    RoundRobin,
+    FillFirst,
+}
+
+fn default_api_rotation_strategy() -> ApiRotationStrategy {
+    ApiRotationStrategy::RoundRobin
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiGatewayKey {
+    pub id: String,
+    pub name: String,
+    /// Only the full secret is persisted locally. It is returned once on create,
+    /// and snapshots expose only a masked suffix.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secret: Option<String>,
+    pub prefix: String,
+    pub enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<String>,
+    pub created_at: String,
+}
+
+/// A combo (9router-style): a named, ordered list of model names. The combo `name` is the model id
+/// clients request; each member is just a model string (e.g. `gpt-5-codex`). The provider/account
+/// is resolved at request time from the gateway's enabled accounts — a member never names an
+/// account. Order is the fallback priority; `strategy` overrides the global default per combo.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiGatewayCombo {
+    pub id: String,
+    /// The model id clients request. Unique. Was `model` in the old pool schema.
+    #[serde(alias = "model")]
+    pub name: String,
+    /// Ordered list of member model names. Old schema stored objects; migrated below.
+    #[serde(default, deserialize_with = "deserialize_combo_members")]
+    pub members: Vec<String>,
+    /// Per-combo rotation strategy. `None` = use the gateway's global strategy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strategy: Option<ApiRotationStrategy>,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// Accept both the new shape (array of model-name strings) and the legacy pool shape
+/// (array of `{model, ...}` objects), so an existing `state.json` migrates transparently.
+fn deserialize_combo_members<'de, D>(deserializer: D) -> std::result::Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Member {
+        Name(String),
+        Legacy { model: String },
+    }
+    let raw = Vec::<Member>::deserialize(deserializer)?;
+    let mut out = Vec::with_capacity(raw.len());
+    for member in raw {
+        let model = match member {
+            Member::Name(model) => model,
+            Member::Legacy { model } => model,
+        };
+        if !out.contains(&model) {
+            out.push(model);
+        }
+    }
+    Ok(out)
+}
+
+/// One subscription account's participation in the gateway: whether it may serve API traffic,
+/// plus its live rotation state (cooldown/errored). Replaces the per-pool-member state.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiGatewayAccount {
+    pub tool_id: ToolId,
+    pub account_id: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default = "api_pool_member_default_state")]
+    pub state: ApiPoolAccountState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cooldown_until: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+fn api_pool_member_default_state() -> ApiPoolAccountState {
+    ApiPoolAccountState::Available
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiGatewayModelRegistry {
+    pub tool_id: ToolId,
+    pub account_id: String,
+    #[serde(default)]
+    pub models: Vec<String>,
+    pub updated_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiGatewayConfig {
+    #[serde(default = "default_api_bind_host")]
+    pub bind_host: String,
+    #[serde(default = "default_api_port")]
+    pub port: u16,
+    #[serde(default = "default_api_quota_threshold")]
+    pub quota_threshold: f64,
+    #[serde(default = "default_api_max_retries")]
+    pub max_retries: u8,
+    #[serde(default = "default_api_rotation_strategy")]
+    pub rotation_strategy: ApiRotationStrategy,
+    #[serde(default)]
+    pub keys: Vec<ApiGatewayKey>,
+    /// Combos (named model lists). Reads the legacy `pools` key too for migration.
+    #[serde(default, alias = "pools")]
+    pub combos: Vec<ApiGatewayCombo>,
+    /// Which subscription accounts may serve gateway traffic, plus their rotation state.
+    #[serde(default)]
+    pub accounts: Vec<ApiGatewayAccount>,
+    #[serde(default)]
+    pub model_registry: Vec<ApiGatewayModelRegistry>,
+    #[serde(default)]
+    pub virtual_claude_enabled: bool,
+    #[serde(default)]
+    pub virtual_codex_enabled: bool,
+}
+
+impl Default for ApiGatewayConfig {
+    fn default() -> Self {
+        Self {
+            bind_host: default_api_bind_host(),
+            port: default_api_port(),
+            quota_threshold: default_api_quota_threshold(),
+            max_retries: default_api_max_retries(),
+            rotation_strategy: default_api_rotation_strategy(),
+            keys: Vec::new(),
+            combos: Vec::new(),
+            accounts: Vec::new(),
+            model_registry: Vec::new(),
+            virtual_claude_enabled: false,
+            virtual_codex_enabled: false,
+        }
+    }
+}
+
+fn default_api_bind_host() -> String {
+    "127.0.0.1".to_string()
+}
+
+fn default_api_port() -> u16 {
+    8783
+}
+
+fn default_api_quota_threshold() -> f64 {
+    95.0
+}
+
+fn default_api_max_retries() -> u8 {
+    3
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiGatewayStatus {
+    pub state: ApiGatewayServerState,
+    pub base_url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiGatewaySnapshot {
+    pub config: ApiGatewayConfig,
+    pub status: ApiGatewayStatus,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiUsageReport {
+    pub generated_at: String,
+    pub total_requests: u64,
+    pub total: TokenBreakdown,
+    pub rows: Vec<ApiUsageRow>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiUsageRow {
+    #[serde(alias = "poolModel")]
+    pub combo_name: String,
+    pub key_id: String,
+    pub account_id: String,
+    pub tool_id: ToolId,
+    pub requests: u64,
+    pub tokens: TokenBreakdown,
+    pub last_used_at: String,
+}
+
+impl Default for ApiGatewayStatus {
+    fn default() -> Self {
+        Self {
+            state: ApiGatewayServerState::Stopped,
+            base_url: "http://127.0.0.1:8783".to_string(),
+            error: None,
+        }
+    }
+}
+
+impl Default for ApiGatewaySnapshot {
+    fn default() -> Self {
+        Self {
+            config: ApiGatewayConfig::default(),
+            status: ApiGatewayStatus::default(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QuotaWindow {
+    pub label: String,
+    pub percent_used: Option<f64>,
+    pub reset_at: Option<String>,
+    /// Whether the provider reports this window as currently active. Backend-only confirm signal
+    /// for Claude (parsed from `limits[kind == "session"].is_active`): it flips to `true` the moment
+    /// a fresh 5h window opens, before `reset_at` propagates to a new value. `None` when the provider
+    /// doesn't report it (Codex/Antigravity, or older Claude payloads). Skipped from serialization so
+    /// the frontend `QuotaWindow` type is unaffected.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_active: Option<bool>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RateLimitResetCredit {
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reset_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub granted_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub redeemed_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RateLimitResetCredits {
+    pub available_count: u32,
+    #[serde(default)]
+    pub credits: Vec<RateLimitResetCredit>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QuotaInfo {
+    pub five_hour: QuotaWindow,
+    pub weekly: QuotaWindow,
+    /// Per-model quota detail (Antigravity). None for tools that only have a
+    /// single overall window (Claude, Codex).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub models: Option<Vec<QuotaWindow>>,
+    /// Subscription plan label parsed from the usage API (e.g. "Plus", "Pro", "Max").
+    /// None when the API doesn't report one. Shown as a small badge next to the name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan: Option<String>,
+    /// Codex usage-limit reset credits. The live usage endpoint reports only the count; the
+    /// detail endpoint also reports each credit's grant and expiry timestamps.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate_limit_reset_credits: Option<RateLimitResetCredits>,
+    /// Whether the user can open a fresh 5h window right now ("Prime ngay").
+    ///
+    /// Provider-aware because the two endpoints report `reset_at` differently:
+    /// - Claude returns a fixed `reset_at` for a live window, and null once the window
+    ///   has fully ended (`used% 0`, no error). So `Some(true)` = ended-or-no-window.
+    /// - Codex's `/wham/usage` returns a ROLLING `reset_at` (≈ now + 5h) until a real
+    ///   request anchors the window; while rolling, the window isn't real, so priming
+    ///   is available even though `reset_at` looks like it's in the future.
+    ///
+    /// `None` = unknown (read error / quota not loaded) → frontend hides the button.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prime_available: Option<bool>,
+    /// Set when the provider rate-limited the usage read (HTTP 429): the RFC 3339 time the app will
+    /// next try. `error` carries the message; the windows hold the last good numbers (if any), so
+    /// the UI can keep showing them, marked stale, instead of blanking the account.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate_limited_until: Option<String>,
+    pub updated_at: Option<String>,
+    pub error: Option<String>,
+}
+
+impl QuotaInfo {
+    /// Empty QuotaInfo with a custom error message (e.g. "Open Antigravity IDE…").
+    pub fn with_message(message: impl Into<String>) -> Self {
+        Self {
+            five_hour: QuotaWindow {
+                label: "5-hour limit".to_string(),
+                ..Default::default()
+            },
+            weekly: QuotaWindow {
+                label: "Weekly limit".to_string(),
+                ..Default::default()
+            },
+            models: None,
+            plan: None,
+            rate_limit_reset_credits: None,
+            prime_available: None,
+            rate_limited_until: None,
+            updated_at: Some(chrono::Utc::now().to_rfc3339()),
+            error: Some(message.into()),
+        }
+    }
+}
+
+/// API/proxy provider config for an account that runs a CLI tool through an external
+/// gateway (API key) instead of a subscription OAuth login. The API key itself is NOT
+/// stored here — it lives in a file inside the account's profile dir (`api_key`).
+///
+/// One account = one pinned gateway model: Codex's `/model` picker can't resolve gateway
+/// ids, so the launcher forces `-m <model>` and the account runs only this model. Use a
+/// separate account for a different model/effort.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiProvider {
+    /// Gateway base URL, e.g. `https://your-gateway.com/v1`. Models are listed at `{base_url}/models`.
+    pub base_url: String,
+    /// The gateway model id the account runs (written as `model = "…"` and forced via `-m`).
+    /// `alias` reads accounts saved by the earlier `defaultModel` schema; an unknown `modelMap`
+    /// key from that schema is simply ignored on load.
+    #[serde(alias = "defaultModel")]
+    pub model: String,
+    /// Add `--dangerously-bypass-approvals-and-sandbox` to the account's launcher. Default off.
+    #[serde(default)]
+    pub bypass: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Account {
+    pub id: String,
+    pub tool_id: ToolId,
+    pub name: String,
+    pub state: AccountState,
+    pub fingerprint: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub last_used_at: Option<String>,
+    pub quota: Option<QuotaInfo>,
+    /// Custom command to use the account (e.g. `claude-work`). None for the Default
+    /// account (uses the bare `claude`/`codex` command).
+    #[serde(default)]
+    pub launcher_command: Option<String>,
+    /// true for the "Machine default" account pointing at ~/.claude (~/.codex) — read-only.
+    #[serde(default)]
+    pub is_default: bool,
+    /// Hidden accounts stay on disk (credentials, profile) but are treated as not added:
+    /// they leave the list, lose their launcher command, and cannot be switched to / auto-switched
+    /// / used by the API gateway until unhidden.
+    #[serde(default)]
+    pub hidden: bool,
+    /// Reserve-quota lock: once the weekly window reaches the threshold the account is locked
+    /// (stays on the list, but loses its launcher and can't be switched to / auto-switched / used
+    /// by the gateway) until the weekly window resets or the user unlocks it by hand.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub weekly_lock: Option<WeeklyLock>,
+    /// The account's Google avatar (Antigravity only) — shown instead of the
+    /// confusing fingerprint. Computed when building the snapshot, not stored in state.json.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub avatar_url: Option<String>,
+    /// Present when the account runs through an external API/proxy gateway instead of a
+    /// subscription login. Such accounts have no quota (the gateway exposes none).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_provider: Option<ApiProvider>,
+}
+
+impl Account {
+    /// Locked by the weekly reserve-quota setting — not usable until unlocked.
+    pub fn is_locked(&self) -> bool {
+        self.weekly_lock.as_ref().is_some_and(|lock| lock.locked)
+    }
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct WeeklyLock {
+    /// Auto-lock is armed. Unlocking by hand turns it off; re-enabling checks again.
+    pub enabled: bool,
+    /// Weekly % used at which the account locks.
+    pub threshold: f64,
+    /// Currently locked.
+    #[serde(default)]
+    pub locked: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolStatus {
+    pub id: ToolId,
+    pub name: String,
+    pub installed: bool,
+    /// The account the plain command currently uses (Active state). None = Machine default.
+    pub active_account_id: Option<String>,
+    pub accounts: Vec<Account>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppSnapshot {
+    pub tools: Vec<ToolStatus>,
+    pub disclaimer_accepted: bool,
+    /// Legacy global switch fields kept for older UI/dev snapshots.
+    pub auto_switch: bool,
+    pub auto_switch_threshold: f64,
+    #[serde(default)]
+    pub auto_switch_settings: std::collections::BTreeMap<String, AutoSwitchSetting>,
+    #[serde(default)]
+    pub tool_setups: std::collections::BTreeMap<String, ToolSetup>,
+    #[serde(default)]
+    pub api_gateway: ApiGatewaySnapshot,
+}
+
+/// Saved geometry of the floating quota overlay window (screen coordinates, logical pixels).
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OverlayRect {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+impl Default for OverlayRect {
+    fn default() -> Self {
+        Self {
+            x: 40.0,
+            y: 60.0,
+            // Tall enough for the default rows (the account in use per CLI + Cursor + opencode)
+            // without scrolling; the user resizes from there.
+            width: 288.0,
+            height: 330.0,
+        }
+    }
+}
+
+/// Settings for the always-on-top quota overlay (a second, frameless window).
+///
+/// `accounts` holds `"<tool>:<accountId>"` keys instead of bare account ids so the same id
+/// under two tools can never collide. An empty list means "show the account in use of every
+/// installed CLI", which is what a fresh install gets.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OverlaySettings {
+    /// Whether the overlay window is shown (restored on next app start).
+    pub enabled: bool,
+    /// `"<tool>:<accountId>"` rows to render. Empty = the active account of each CLI.
+    #[serde(default)]
+    pub accounts: Vec<String>,
+    /// Opacity while the pointer is elsewhere, 0.15..1.0. Low values let the overlay sit on top
+    /// of whatever the user is reading without getting in the way.
+    #[serde(default = "default_overlay_opacity")]
+    pub opacity: f64,
+    /// Opacity while the pointer is over the overlay, 0.15..1.0. Normally higher than `opacity`:
+    /// point at it to read the numbers, move away and it fades back out.
+    #[serde(default = "default_overlay_hover_opacity")]
+    pub hover_opacity: f64,
+    /// Hide the weekly bar and shrink each row to a single line.
+    #[serde(default)]
+    pub compact: bool,
+    /// Let clicks pass through to whatever is behind the overlay (view-only mode).
+    #[serde(default)]
+    pub click_through: bool,
+    /// Footer line with CPU / RAM and the heaviest app, to catch the machine bogging down early.
+    #[serde(default = "default_true")]
+    pub show_system: bool,
+    /// Last position/size, so reopening puts it back where the user left it.
+    #[serde(default)]
+    pub rect: OverlayRect,
+}
+
+fn default_overlay_opacity() -> f64 {
+    0.45
+}
+
+fn default_overlay_hover_opacity() -> f64 {
+    1.0
+}
+
+impl Default for OverlaySettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            accounts: Vec::new(),
+            opacity: default_overlay_opacity(),
+            hover_opacity: default_overlay_hover_opacity(),
+            compact: false,
+            click_through: false,
+            show_system: true,
+            rect: OverlayRect::default(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutoSwitchSetting {
+    pub enabled: bool,
+    pub threshold: f64,
+}
+
+impl Default for AutoSwitchSetting {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            threshold: 100.0,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrimeNowInput {
+    pub tool_id: ToolId,
+    pub account_id: String,
+}
+
+/// Result of an on-demand "Prime ngay": a short message plus a kind the UI maps to a toast colour.
+/// `success` = a new window opened; `info` = nothing wrong but no new window (the old one is still
+/// running — a Hold); `error` = an actual failure (no token / send failed / unconfirmed).
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrimeNowResult {
+    pub kind: String,
+    pub message: String,
+}
+
+/// Payload of the `prime-now-done` event: the final outcome of a manual prime that ran on a
+/// background thread. `account_id` lets the UI match it to the button that started it.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrimeNowDone {
+    pub account_id: String,
+    pub kind: String,
+    pub message: String,
+}
+
+/// A leftover profile directory under `accounts/{tool}/` that belongs to no current account — e.g.
+/// an account deleted from the app, or a profile another CLI session uses directly. Surfaced by the
+/// "Clean up old account data" action so the user can reclaim disk, with an in-use warning so a live
+/// profile isn't deleted by accident.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrphanAccountDir {
+    pub tool_id: ToolId,
+    /// The directory name (the former account id).
+    pub id: String,
+    /// Absolute path on disk.
+    pub path: String,
+    /// Total size in bytes.
+    pub size_bytes: u64,
+    /// Human-readable size (e.g. "4.0 KB", "12.3 MB").
+    pub size_label: String,
+    /// True if the dir looks actively used — recently modified transcripts — so deleting it would
+    /// likely disrupt a running CLI session. The UI warns and does not pre-select these.
+    pub in_use: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum DetectionSource {
+    Env,
+    Default,
+    Path,
+    AppManaged,
+    Manual,
+    Fallback,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolSetup {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub binary_path: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_config_dir: Option<PathBuf>,
+    pub binary_source: DetectionSource,
+    pub config_source: DetectionSource,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub validated_at: Option<String>,
+    #[serde(default)]
+    pub validation_warnings: Vec<String>,
+}
+
+impl Default for ToolSetup {
+    fn default() -> Self {
+        Self {
+            binary_path: None,
+            default_config_dir: None,
+            binary_source: DetectionSource::Fallback,
+            config_source: DetectionSource::Fallback,
+            validated_at: None,
+            validation_warnings: Vec::new(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ValidationEvidence {
+    pub label: String,
+    pub found: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigCandidate {
+    pub path: PathBuf,
+    pub source: DetectionSource,
+    pub score: u32,
+    pub valid: bool,
+    pub is_app_managed: bool,
+    pub evidence: Vec<ValidationEvidence>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BinaryCandidate {
+    pub path: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved_path: Option<PathBuf>,
+    pub source: DetectionSource,
+    pub score: u32,
+    pub valid: bool,
+    pub is_app_launcher: bool,
+    pub evidence: Vec<ValidationEvidence>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ResolutionKind {
+    Resolved,
+    NeedsUserChoice,
+    NeedsManualInput,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DetectionResolution {
+    pub kind: ResolutionKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub setup: Option<ToolSetup>,
+    pub reason: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DetectionReport {
+    pub tool_id: ToolId,
+    pub config_candidates: Vec<ConfigCandidate>,
+    pub binary_candidates: Vec<BinaryCandidate>,
+    pub resolution: DetectionResolution,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetToolSetupInput {
+    pub tool_id: ToolId,
+    pub binary_path: PathBuf,
+    pub default_config_dir: PathBuf,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AddAccountInput {
+    pub tool_id: ToolId,
+    pub name: String,
+    pub mode: AddMode,
+    /// Custom command name (e.g. `claude-work`) — required for Claude/Codex (Login mode).
+    #[serde(default)]
+    pub launcher: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AddMode {
+    Import,
+    Login,
+}
+
+/// Add an account that runs the CLI through an external API/proxy gateway (no OAuth login).
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AddApiAccountInput {
+    pub tool_id: ToolId,
+    pub name: String,
+    pub base_url: String,
+    pub api_key: String,
+    pub model: String,
+    /// Optional custom command (e.g. `codex-p`). Without one the account is used via the bare
+    /// command after pressing Use.
+    #[serde(default)]
+    pub launcher: Option<String>,
+    #[serde(default)]
+    pub bypass: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartApiGatewayInput {
+    pub bind_host: String,
+    pub port: u16,
+    pub quota_threshold: f64,
+    #[serde(default = "default_api_rotation_strategy")]
+    pub rotation_strategy: ApiRotationStrategy,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateApiGatewayKeyInput {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateApiGatewayKeyResult {
+    pub snapshot: AppSnapshot,
+    pub secret: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveApiGatewayComboInput {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    pub name: String,
+    /// Ordered list of member model names.
+    pub members: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strategy: Option<ApiRotationStrategy>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteApiGatewayKeyInput {
+    pub key_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteApiGatewayComboInput {
+    pub combo_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetApiGatewayAccountInput {
+    pub tool_id: ToolId,
+    pub account_id: String,
+    pub enabled: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateVirtualApiAccountInput {
+    pub tool_id: ToolId,
+    /// Combo (model id) to bind the virtual account to. None = first enabled combo.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RenameAccountInput {
+    pub tool_id: ToolId,
+    pub account_id: String,
+    pub name: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SwitchAccountInput {
+    pub tool_id: ToolId,
+    pub account_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetLauncherInput {
+    pub tool_id: ToolId,
+    pub account_id: String,
+    pub name: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetWeeklyLockInput {
+    pub tool_id: ToolId,
+    pub account_id: String,
+    pub enabled: bool,
+    pub threshold: f64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetAccountHiddenInput {
+    pub tool_id: ToolId,
+    pub account_id: String,
+    pub hidden: bool,
+}
+
+// ---------------------------------------------------------------------------
+// Token usage tracking (Usage tab) — aggregates token counts + cost from the
+// CLIs' local JSONL logs. Claude's logs undercount badly (see usage.rs), so its
+// numbers are flagged `estimate: true`; Codex's cumulative token_count is accurate.
+// ---------------------------------------------------------------------------
+
+/// A split of tokens by billing category (unified across Claude + Codex).
+/// For Codex `cache_creation` is always 0 (it has no prompt-cache-write tier);
+/// `input` is the non-cached input (cached input is counted in `cache_read`).
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TokenBreakdown {
+    pub input: u64,
+    pub output: u64,
+    pub cache_read: u64,
+    pub cache_creation: u64,
+}
+
+impl TokenBreakdown {
+    pub fn total(&self) -> u64 {
+        self.input + self.output + self.cache_read + self.cache_creation
+    }
+
+    pub fn add(&mut self, other: &TokenBreakdown) {
+        self.input += other.input;
+        self.output += other.output;
+        self.cache_read += other.cache_read;
+        self.cache_creation += other.cache_creation;
+    }
+
+    /// Per-field `self - already`, floored at zero. Used to top up a message whose usage was
+    /// partly counted in an earlier scan, so the same tokens are never added twice.
+    pub fn saturating_delta(&self, already: &TokenBreakdown) -> TokenBreakdown {
+        TokenBreakdown {
+            input: self.input.saturating_sub(already.input),
+            output: self.output.saturating_sub(already.output),
+            cache_read: self.cache_read.saturating_sub(already.cache_read),
+            cache_creation: self.cache_creation.saturating_sub(already.cache_creation),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DayUsage {
+    /// Local date `YYYY-MM-DD`.
+    pub date: String,
+    pub tokens: TokenBreakdown,
+    pub cost_usd: Option<f64>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelUsage {
+    pub model: String,
+    pub tokens: TokenBreakdown,
+    pub cost_usd: Option<f64>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionUsage {
+    /// Short session id (the JSONL file stem).
+    pub id: String,
+    /// Local date `YYYY-MM-DD` of the last activity in the session.
+    pub date: String,
+    pub model: String,
+    pub tokens: TokenBreakdown,
+    pub cost_usd: Option<f64>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectUsage {
+    /// Absolute working directory recorded by the CLI session.
+    pub path: String,
+    pub tokens: TokenBreakdown,
+    pub cost_usd: Option<f64>,
+    pub session_count: u32,
+    pub last_active: String,
+    pub daily: Vec<DayUsage>,
+    pub by_model: Vec<ModelUsage>,
+    pub sessions: Vec<SessionUsage>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolUsage {
+    pub tool_id: ToolId,
+    pub display_name: String,
+    /// true = the numbers are an estimate (Claude's JSONL undercounts tokens).
+    pub estimate: bool,
+    pub total: TokenBreakdown,
+    pub total_cost_usd: Option<f64>,
+    pub today: TokenBreakdown,
+    pub today_cost_usd: Option<f64>,
+    /// Per local-day totals, oldest → newest.
+    pub daily: Vec<DayUsage>,
+    /// Per-model totals, most tokens first.
+    pub by_model: Vec<ModelUsage>,
+    /// Recent sessions, newest first (capped).
+    pub sessions: Vec<SessionUsage>,
+    /// Per-working-directory totals, highest cost/token usage first.
+    pub projects: Vec<ProjectUsage>,
+    /// Models that produced tokens but have no price in the LiteLLM cache. When this is non-empty
+    /// every `*_cost_usd` above is a LOWER BOUND, not the full cost — the UI must say so instead of
+    /// presenting the number as complete.
+    #[serde(default)]
+    pub unpriced_models: Vec<String>,
+    /// Claude only: usage split by the Claude organization (= subscription account) that ran it,
+    /// read from the `credential_org` markers in the session JSONL. Includes accounts that were
+    /// removed from the app, plus one row with `org_uuid == ""` for usage logged before markers
+    /// existed. Empty for other tools. Highest cost/token usage first.
+    #[serde(default)]
+    pub accounts: Vec<AccountUsage>,
+}
+
+/// Token usage attributed to one Claude organization (one subscription login).
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountUsage {
+    /// `organizationUuid` from the JSONL `credential_org` marker; "" = not attributable.
+    pub org_uuid: String,
+    /// Human label: account email when known, else the org name, else a short uuid.
+    pub label: String,
+    /// Names of the app accounts (current or removed) that were logged in to this org.
+    pub account_names: Vec<String>,
+    /// true when no account currently in the app maps to this org (deleted, or never added).
+    pub removed: bool,
+    pub tokens: TokenBreakdown,
+    pub cost_usd: Option<f64>,
+    pub session_count: u32,
+    pub last_active: String,
+    pub daily: Vec<DayUsage>,
+    pub by_model: Vec<ModelUsage>,
+    pub sessions: Vec<SessionUsage>,
+    /// This account's usage split per working directory (same shape and rules as
+    /// `ToolUsage::projects`, restricted to this account), highest cost/tokens first. Lets the UI
+    /// filter an account's numbers by project.
+    #[serde(default)]
+    pub projects: Vec<ProjectUsage>,
+}
+
+/// How the usage report should label one org — built by app_state from `StoredState::claude_orgs`
+/// + the current accounts, consumed by `usage::build_report`. Not serialized to the UI.
+#[derive(Clone, Debug, Default)]
+pub struct UsageOrgLabel {
+    pub label: String,
+    /// Login email of the org, used to fold email-only usage (logs from before `credential_org`
+    /// markers) into the same row.
+    pub email: Option<String>,
+    pub account_names: Vec<String>,
+    pub removed: bool,
+}
+
+/// Persistent registry entry (state.json `claudeOrgs`, keyed by organization uuid). Survives
+/// account deletion so usage of a removed account keeps its name; re-adding the same login maps
+/// back to the same record.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaudeOrgRecord {
+    #[serde(default)]
+    pub email: Option<String>,
+    #[serde(default)]
+    pub organization_name: Option<String>,
+    /// App account ids ever resolved to this org.
+    #[serde(default)]
+    pub account_ids: Vec<String>,
+    /// Their names (kept after deletion), same order as `account_ids`.
+    #[serde(default)]
+    pub account_names: Vec<String>,
+    #[serde(default)]
+    pub last_seen: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageReport {
+    pub tools: Vec<ToolUsage>,
+    pub generated_at: String,
+    /// "live" (just fetched), "cached" (LiteLLM cache on disk), or "unavailable".
+    pub price_status: String,
+    pub price_updated_at: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn account_hidden_defaults_to_false_on_old_state() {
+        let json = r#"{
+            "id": "c2",
+            "toolId": "claude",
+            "name": "Work",
+            "state": "idle",
+            "fingerprint": "profile:c2",
+            "createdAt": "2026-05-21T10:00:00Z",
+            "updatedAt": "2026-05-30T08:00:00Z",
+            "lastUsedAt": null,
+            "quota": null
+        }"#;
+        let account: Account = serde_json::from_str(json).unwrap();
+        assert!(!account.hidden);
+        assert!(!account.is_default);
+    }
+}
