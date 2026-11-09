@@ -29,3 +29,7 @@ test_codex_sandbox.rs
 _templates/
 brand/
 docs/releases/
+
+# Screenshots published with the application preview
+!docs/preview/
+!docs/preview/*.png

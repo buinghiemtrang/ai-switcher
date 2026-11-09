@@ -1,5 +1,7 @@
 # AI switcher
 
+[📷 Xem ảnh giao diện ứng dụng](PREVIEW.md)
+
 Independent internal desktop build of an AI coding account manager, built with Tauri 2, Rust and React. This workspace targets Ubuntu 24.04 x86_64. Linux support is being adapted and must pass the checks below before distributing it to colleagues.
 
 ## Install from this repository
