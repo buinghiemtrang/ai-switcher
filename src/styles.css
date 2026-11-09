@@ -995,6 +995,11 @@ button.danger:hover:not(:disabled) {
   min-width: 0;
 }
 
+.allAccountQuotaNote {
+  color: var(--text-3);
+  font-size: 11px;
+}
+
 .allAccountTool {
   justify-self: start;
   font-size: 12px;

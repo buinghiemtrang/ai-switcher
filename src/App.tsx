@@ -451,7 +451,8 @@ export function App() {
     // Fire all account refreshes in parallel so each card updates independently.
     for (const account of tool.accounts) {
       if (account.hidden) continue;
-      if (account.state !== "needs-login" && !account.apiProvider) {
+      if (account.state !== "needs-login" && !account.apiProvider
+        && (tool.id !== "antigravity" || tool.activeAccountId === account.id)) {
         void refreshOneAccount(selectedTool, account.id);
       }
     }
@@ -555,7 +556,13 @@ export function App() {
       onDelete={() =>
         run("delete", () => api.deleteAccount(tool.id, account.id))
       }
-      onRefreshQuota={() => void refreshOneAccount(tool.id, account.id)}
+      onRefreshQuota={() => {
+        if (tool.id === "antigravity" && tool.activeAccountId !== account.id) {
+          notify("Open this Antigravity account in the IDE before refreshing its quota.", "info");
+          return;
+        }
+        void refreshOneAccount(tool.id, account.id);
+      }}
       refreshingQuota={refreshingAccounts.has(account.id)}
       onRefreshToken={() => void refreshTokenForAccount(tool.id, account.id)}
       refreshingToken={refreshingTokens.has(account.id)}
@@ -783,6 +790,9 @@ export function App() {
                   <button className="allAccountTool" onClick={() => { setSelectedTool(tool.id); setView("accounts"); }}>
                     {tool.name}
                   </button>
+                  {tool.id === "antigravity" && tool.activeAccountId !== account.id && (
+                    <small className="allAccountQuotaNote">Saved quota · open this account in the IDE to refresh</small>
+                  )}
                   {renderAccountCard(tool, account)}
                 </div>
               ))}
