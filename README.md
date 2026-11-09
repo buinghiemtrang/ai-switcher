@@ -2,6 +2,19 @@
 
 Independent internal desktop build of an AI coding account manager, built with Tauri 2, Rust and React. This workspace targets Ubuntu 24.04 x86_64. Linux support is being adapted and must pass the checks below before distributing it to colleagues.
 
+## Install from this repository
+
+This repository is private: colleagues need repository access and must sign in to GitHub.
+A downloadable installer is available only after a successful build is published to Releases.
+On Ubuntu 24.04 amd64, download the `.deb` from this repository's Releases page, then run:
+
+```bash
+sudo apt install ./ai-account-switcher_*.deb
+```
+
+The Linux adaptation is currently a preview. Antigravity switching is unavailable.
+For development or when no installer has been released, follow the source-build steps below.
+
 ## Develop on Ubuntu
 
 Install Node.js 20+, a current stable Rust toolchain, and the native build dependencies:
@@ -44,7 +57,7 @@ The optional gateway defaults to `127.0.0.1:8783` and uses gateway API keys. Bin
 
 ## Internal distribution
 
-The included GitHub workflow runs manually, builds an Ubuntu Debian package and stores it as a workflow artifact. It does not publish a release automatically. Review and test each artifact before distributing it through your company's chosen channel.
+The GitHub workflow builds and tests on pushes and pull requests, then stores the Debian package as an artifact. To publish a downloadable preview installer, run the workflow manually with a new `release_tag` (for example `v0.12.0-linux.1`). The release job runs only after build and tests succeed. A blank tag only builds an artifact. Review and test installers before company rollout.
 
 Before a rollout, verify startup, CLI detection, login, quota refresh, account switching, launchers, gateway authorization, and restart persistence using dedicated test accounts. Real provider authentication cannot be verified without those accounts.
 
