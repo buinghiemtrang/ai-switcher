@@ -4,6 +4,7 @@
 
 - Added the All tab for Claude Code, Codex and Antigravity account quotas.
 - Hidden Cursor CLI and opencode from the interface.
+- Keep inactive Antigravity quotas cached and discard live results if the IDE account changes during refresh.
 - Added a GitHub-backed npx installer with checksum verification.
 - Simplified README into npx and Debian installer options; moved developer instructions to DEVELOPMENT.md.
 

@@ -1001,7 +1001,8 @@ impl ManagedState {
     }
 
     pub fn refresh_tool(&self, tool_id: ToolId, app: Option<&AppHandle>) -> Result<AppSnapshot> {
-        // Phase 1: collect (account_id, config_dir) — brief lock, no HTTP, no disk I/O.
+        // Phase 1: collect (account_id, config_dir) — brief lock, no HTTP. Antigravity's
+        // live endpoint belongs to the IDE identity, so resolve its saved-account match once.
         // Also collect the dirs that may need their shared session link healed; the filesystem work
         // runs AFTER the lock is dropped so a slow disk never blocks the UI or other commands.
         let (accounts_info, heal_targets): (
@@ -1013,6 +1014,11 @@ impl ManagedState {
                 .lock()
                 .map_err(|_| anyhow::anyhow!("state lock poisoned"))?;
             let default_config_dir = resolved_default_config_dir(&data, &tool_id);
+            let live_account_id = if tool_id == ToolId::Antigravity {
+                active_account_id_for(&self.store, &tool_id, &data.accounts)
+            } else {
+                None
+            };
             let heal_targets = data
                 .accounts
                 .iter()
@@ -1027,6 +1033,7 @@ impl ManagedState {
                         && !a.hidden
                         && a.state != AccountState::NeedsLogin
                         && a.api_provider.is_none()
+                        && can_refresh_quota_for_account(&tool_id, &a.id, live_account_id.as_deref())
                 })
                 .map(|a| {
                     (
@@ -1078,9 +1085,19 @@ impl ManagedState {
                 .lock()
                 .map_err(|_| anyhow::anyhow!("state lock poisoned"))?;
             let timestamp = now();
+            // The user may have switched IDE identity while HTTP was in flight. Never assign
+            // that live result to a saved account that is no longer the IDE's current account.
+            let live_account_id = if tool_id == ToolId::Antigravity {
+                active_account_id_for(&self.store, &tool_id, &data.accounts)
+            } else {
+                None
+            };
             let mut exhausted = Vec::new();
             let mut lock_changes = Vec::new();
             for (account_id, quota) in results {
+                if !can_refresh_quota_for_account(&tool_id, &account_id, live_account_id.as_deref()) {
+                    continue;
+                }
                 if let Some(account) = data
                     .accounts
                     .iter_mut()
@@ -1149,6 +1166,11 @@ impl ManagedState {
                 .lock()
                 .map_err(|_| anyhow::anyhow!("state lock poisoned"))?;
             let default_dir = resolved_default_config_dir(&data, tool_id);
+            let live_account_id = if *tool_id == ToolId::Antigravity {
+                active_account_id_for(&self.store, tool_id, &data.accounts)
+            } else {
+                None
+            };
             data.accounts
                 .iter()
                 .find(|a| {
@@ -1157,6 +1179,7 @@ impl ManagedState {
                         && !a.hidden
                         && a.state != AccountState::NeedsLogin
                         && a.api_provider.is_none()
+                        && can_refresh_quota_for_account(tool_id, &a.id, live_account_id.as_deref())
                 })
                 .map(|a| account_config_dir_with_default(&self.store, a, &default_dir))
         };
@@ -1175,10 +1198,19 @@ impl ManagedState {
                 .map_err(|_| anyhow::anyhow!("state lock poisoned"))?;
             let mut result = None;
             let mut lock_change = None;
+            let live_account_id = if *tool_id == ToolId::Antigravity {
+                active_account_id_for(&self.store, tool_id, &data.accounts)
+            } else {
+                None
+            };
             if let Some(account) = data
                 .accounts
                 .iter_mut()
-                .find(|a| a.tool_id == *tool_id && a.id == account_id)
+                .find(|a| {
+                    a.tool_id == *tool_id
+                        && a.id == account_id
+                        && can_refresh_quota_for_account(tool_id, &a.id, live_account_id.as_deref())
+                })
             {
                 let was_exhausted = account.state == AccountState::Exhausted;
                 account.quota = Some(keep_last_quota_when_rate_limited(
@@ -3020,6 +3052,16 @@ fn canonical_path(path: &std::path::Path) -> std::path::PathBuf {
     path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }
 
+/// Antigravity reads the running IDE's quota rather than a profile-specific endpoint. An
+/// unknown identity must keep all saved quotas cached instead of attributing it to any account.
+fn can_refresh_quota_for_account(
+    tool_id: &ToolId,
+    account_id: &str,
+    live_account_id: Option<&str>,
+) -> bool {
+    *tool_id != ToolId::Antigravity || live_account_id == Some(account_id)
+}
+
 fn active_account_id_for(store: &Store, tool_id: &ToolId, accounts: &[Account]) -> Option<String> {
     if matches!(tool_id, ToolId::Antigravity) {
         // The account in use = the account whose token matches the IDE's current token in state.vscdb.
@@ -3027,7 +3069,8 @@ fn active_account_id_for(store: &Store, tool_id: &ToolId, accounts: &[Account]) 
         return accounts
             .iter()
             .find(|account| {
-                !account.hidden
+                account.tool_id == *tool_id
+                    && !account.hidden
                     && antigravity_saved_token(store, &account.id).as_deref() == Some(current.as_str())
             })
             .map(|account| account.id.clone());
@@ -3517,6 +3560,28 @@ fn local_time_label_from_iso(iso: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn antigravity_quota_refresh_requires_the_current_known_identity() {
+        let saved_accounts = ["work", "personal"];
+        let eligible = |active| {
+            saved_accounts
+                .into_iter()
+                .filter(|id| can_refresh_quota_for_account(&ToolId::Antigravity, id, active))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(eligible(Some("work")), vec!["work"]);
+        assert_eq!(eligible(Some("personal")), vec!["personal"]);
+        assert!(eligible(None).is_empty());
+        assert!(eligible(Some("unsaved-identity")).is_empty());
+        // A fetch started for work must be discarded if personal became current before write-back.
+        assert!(!can_refresh_quota_for_account(&ToolId::Antigravity, "work", Some("personal")));
+        // Other providers read each profile independently and may refresh inactive profiles.
+        for tool in [ToolId::Claude, ToolId::Codex, ToolId::Cursor, ToolId::Opencode] {
+            assert!(can_refresh_quota_for_account(&tool, "work", None));
+            assert!(can_refresh_quota_for_account(&tool, "work", Some("personal")));
+        }
+    }
 
     fn window(percent: Option<f64>, reset_at: Option<String>) -> crate::models::QuotaWindow {
         crate::models::QuotaWindow {
