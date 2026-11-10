@@ -3455,8 +3455,13 @@ fn keep_last_quota_when_rate_limited(
 
 fn is_exhausted(account: &Account) -> bool {
     account.quota.as_ref().is_some_and(|quota| {
-        quota.error.is_none()
-            && [quota.five_hour.percent_used, quota.weekly.percent_used]
+        if quota.error.is_some() { return false; }
+        if account.tool_id == ToolId::Antigravity {
+            if let Some(models) = &quota.models {
+                return !models.is_empty() && models.iter().all(|window| window.percent_used.is_some_and(|used| used >= 100.0));
+            }
+        }
+        [quota.five_hour.percent_used, quota.weekly.percent_used]
                 .into_iter()
                 .flatten()
                 .any(|percent| percent >= 100.0)
@@ -3705,6 +3710,21 @@ mod tests {
             avatar_url: None,
             api_provider: None,
         }
+    }
+
+    #[test]
+    fn antigravity_is_exhausted_only_when_every_known_model_is_exhausted() {
+        let mut account = test_account("agy-fixture", false, 100.0);
+        account.tool_id = ToolId::Antigravity;
+        let quota = account.quota.as_mut().unwrap();
+        let exhausted = quota.five_hour.clone();
+        let available = crate::models::QuotaWindow { percent_used: Some(0.0), ..exhausted.clone() };
+        quota.models = Some(vec![exhausted.clone(), available]);
+        assert!(!is_exhausted(&account));
+        account.quota.as_mut().unwrap().models = Some(vec![exhausted.clone(), exhausted]);
+        assert!(is_exhausted(&account));
+        account.quota.as_mut().unwrap().models.as_mut().unwrap()[0].percent_used = None;
+        assert!(!is_exhausted(&account));
     }
 
     fn with_weekly(mut account: Account, weekly: Option<f64>, lock: WeeklyLock) -> Account {
