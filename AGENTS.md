@@ -44,7 +44,8 @@
 - The bare `cursor-agent` / `opencode` commands follow the selected account via shell FUNCTIONS in
   the hook (not exported variables): `XDG_DATA_HOME` and the Cursor token must stay scoped to that
   one invocation.
-- Antigravity does not use profile env vars. It copy-swaps OAuth/profile keys inside the default IDE `state.vscdb`.
+- Antigravity IDE does not use profile env vars. It copy-swaps OAuth/profile keys inside the default IDE `state.vscdb`.
+- Linux agy CLI is separate: `agy.rs` reads the current SecretService login (service=gemini, username=antigravity) and production quota API. The default CLI account is read-only; never capture/switch it as an IDE profile or read Gemini OAuth credentials for it.
 
 ## Shared Config Rule
 
@@ -85,10 +86,10 @@
 
 - All is the default view, combining visible Claude/Codex/Antigravity accounts. Cursor/opencode UI entries are hidden; preserve their stored data.
 - Shared account-card actions must use the card's tool ID, including dialogs opened from All.
-- Antigravity quota is only live for the current IDE identity. Keep inactive profiles cached and recheck identity before write-back.
+- Antigravity quota is live for the current agy CLI or IDE identity. Keep inactive IDE profiles cached and recheck identity before write-back. An exhausted model does not exhaust the account while other models have quota.
 - `bin/ai-switcher.cjs` installs a pinned GitHub release through `gh`, verifies SHA256SUMS and registers a user-local desktop app. Update its RELEASE constant when publishing a new app version.
 - Installer tests: `node tests/installer.test.cjs`. User installation belongs in README; source/build/release details belong in DEVELOPMENT.md.
 
 ## Session checkpoint
 
-Before resuming unfinished work, read HANDOFF.md. As of 2026-11-09, app 0.12.1 and npx/native All are verified; local documentation and screenshot synchronization remain unfinished. Session memory is under memory/ (ignored).
+Before resuming unfinished work, read HANDOFF.md. As of 2026-11-10, source 0.12.2 adds agy CLI quota, a three-provider tray and All quotas window. Read HANDOFF.md for the latest native verification and gallery state. Session memory is under memory/ (ignored).

@@ -29,13 +29,13 @@ Launcher tải bản Linux đã build sẵn, kiểm tra SHA-256 và cài vào t�
 
 ### Cách 2 — Cài bằng file .deb
 
-1. Mở **[trang tải AI switcher](https://github.com/buinghiemtrang/ai-switcher/releases/tag/v0.12.2-linux.1)**.
-2. Trong **Assets**, tải file **`AI.switcher_0.12.2_amd64.deb`** về thư mục **Downloads**.
+1. Mở **[trang tải AI switcher](https://github.com/buinghiemtrang/ai-switcher/releases/tag/v0.12.3-linux.1)**.
+2. Trong **Assets**, tải file **`AI.switcher_0.12.3_amd64.deb`** về thư mục **Downloads**.
 3. Mở Terminal và chạy:
 
 ```bash
 cd ~/Downloads
-sudo apt install "./AI.switcher_0.12.2_amd64.deb"
+sudo apt install "./AI.switcher_0.12.3_amd64.deb"
 ```
 
 4. Tìm **AI switcher** trong menu ứng dụng và mở lên.
@@ -44,7 +44,7 @@ sudo apt install "./AI.switcher_0.12.2_amd64.deb"
 
 Cài công cụ AI bạn muốn dùng, mở AI switcher, kiểm tra đường dẫn CLI trong **Settings** rồi thêm tài khoản ở tab tương ứng. Mỗi người dùng tài khoản và dữ liệu local riêng trên máy mình.
 
-Antigravity Linux hiện là tính năng thử nghiệm; đóng IDE trước khi chuyển tài khoản.
+Antigravity hỗ trợ account `agy` CLI đang đăng nhập trên Linux và đọc quota theo model. App chưa chuyển giữa nhiều account CLI; đăng nhập được quản lý trong `agy`. Mở **All → All quotas window** để ghim cửa sổ quota nổi.
 
 ## Giao diện ứng dụng
 

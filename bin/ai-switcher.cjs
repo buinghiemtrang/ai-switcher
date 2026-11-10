@@ -8,7 +8,7 @@ const crypto = require('node:crypto');
 const { execFileSync, spawn } = require('node:child_process');
 
 const REPOSITORY = 'buinghiemtrang/ai-switcher';
-const RELEASE = 'v0.12.2-linux.1';
+const RELEASE = 'v0.12.3-linux.1';
 const MANIFEST = '.ai-switcher-install.json';
 
 function assertPlatform(platform = process.platform, architecture = process.arch) {

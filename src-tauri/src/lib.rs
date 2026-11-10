@@ -449,6 +449,7 @@ fn set_overlay_settings(
 ) -> Result<OverlaySettings, String> {
     let saved = state.save_overlay_settings(input).map_err(display_error)?;
     overlay::apply(&app, &saved);
+    tray::rebuild(&app);
     Ok(saved)
 }
 

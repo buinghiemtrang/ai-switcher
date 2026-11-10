@@ -72,7 +72,9 @@ pub(crate) fn read_quota() -> Result<QuotaInfo> {
 }
 
 fn fetch_quota(token: &str) -> Result<QuotaInfo> {
-    let client = reqwest::blocking::Client::builder().timeout(std::time::Duration::from_secs(15)).build()?;
+    // Google selects the CLI quota product from this user agent.
+    let client_builder = reqwest::blocking::Client::builder().user_agent("antigravity");
+    let client = client_builder.timeout(std::time::Duration::from_secs(15)).build()?;
     let load = agy_post(&client, token, "loadCodeAssist", &serde_json::json!({}))?;
     let project = load.get("cloudaicompanionProject").and_then(|v| v.as_str())
         .filter(|v| !v.is_empty()).context("Antigravity CLI account has no quota project; open agy to complete setup")?;

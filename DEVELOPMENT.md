@@ -44,7 +44,7 @@ The Debian package is written beneath `src-tauri/target/release/bundle/deb/`. Bu
 
 ## Network behavior
 
-The reviewed application source calls the configured AI providers (`api.anthropic.com`, `chatgpt.com`, `cursor.com`, `opencode.ai`), a local Antigravity service, and user-configured API/proxy endpoints. Cost estimation downloads the public LiteLLM pricing JSON from `raw.githubusercontent.com/BerriAI/litellm`; that download does not include account credentials. AI CLI login commands may open provider authentication pages independently.
+The reviewed application source calls the configured AI providers (`api.anthropic.com`, `chatgpt.com`, `cursor.com`, `opencode.ai`), a local Antigravity IDE service, Google Antigravity CLI quota APIs (`cloudcode-pa.googleapis.com`), and user-configured API/proxy endpoints. Cost estimation downloads the public LiteLLM pricing JSON from `raw.githubusercontent.com/BerriAI/litellm`; that download does not include account credentials. AI CLI login commands may open provider authentication pages independently.
 
 The source review found no telemetry SDK, automatic application updater, or runtime upload endpoint belonging to the original author. This is a source review, not a guarantee about dependencies or future modifications. The former promotional blog button has been removed.
 
@@ -74,10 +74,18 @@ Launcher dùng trực tiếp source GitHub, không cần publish package lên np
 
 All chỉ hiển thị Claude Code, Codex và Antigravity. Cursor/opencode vẫn được giữ trong dữ liệu/backend, nhưng không hiển thị trong các tab chính.
 
-Quota Antigravity lấy từ IDE đang chạy. Profile chưa active giữ quota đã lưu; backend kiểm tra danh tính trước khi đọc và trước khi ghi kết quả để tránh gán quota sang tài khoản khác.
+Quota Antigravity lấy từ phiên `agy` CLI hiện tại trên Linux hoặc IDE đang chạy. Profile IDE chưa active giữ quota đã lưu; backend kiểm tra danh tính trước khi đọc và trước khi ghi kết quả để tránh gán quota sang tài khoản khác.
 
 ## Kiểm chứng 0.12.1
 
 Source native `984ff76` đã qua 113 test Rust, 5 test installer Node và build gói Debian trong [Actions run 42612378745](https://github.com/buinghiemtrang/ai-switcher/actions/runs/42612378745).
 
 Đã thử cài thật bằng `npx --yes github:buinghiemtrang/ai-switcher --install-only`, mở bằng đúng lệnh npx trong README, xác nhận All là màn hình mặc định, Refresh all hoàn tất và sidebar không có Cursor/opencode. Đăng nhập và chuyển tài khoản Antigravity thật vẫn chưa được kiểm chứng trên máy này.
+
+## Antigravity CLI và quota nổi (0.12.2)
+
+- Nhận diện binary `agy`, đọc phiên hiện tại từ SecretService bằng attributes service=gemini, username=antigravity. Không đọc nhầm Gemini OAuth file, không ghi/refresh credential trong app.
+- Production `loadCodeAssist` trả project, `fetchAvailableModels` nhận project đó và trả quota theo model. Plan ưu tiên paidTier. API dùng access token hiện có, hết hạn thì mở agy để gia hạn.
+- Machine default CLI là read-only. Tài khoản IDE đã lưu giữ riêng; chưa hỗ trợ chuyển nhiều account CLI.
+- Tray chỉ Claude/Codex/Antigravity, không phụ thuộc installed flag để hiện các account đã biết. Antigravity mở main app từ tray thay vì tự đóng IDE.
+- All quotas window dùng overlay có sẵn: mặc định tất cả account chưa ẩn của ba tool, chọn cũ chỉ có Cursor/opencode tự về tất cả. Nút ở All mở cửa sổ với toàn bộ account.
