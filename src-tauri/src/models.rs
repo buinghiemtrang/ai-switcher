@@ -28,7 +28,7 @@ impl ToolId {
             ToolId::Codex => "Codex",
             ToolId::Cursor => "Cursor CLI",
             ToolId::Opencode => "opencode",
-            ToolId::Antigravity => "Antigravity IDE",
+            ToolId::Antigravity => "Antigravity",
         }
     }
 

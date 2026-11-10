@@ -1761,6 +1761,9 @@ impl ManagedState {
     /// Save the Antigravity IDE account currently logged in: capture the token from the default
     /// state.vscdb. The user must ensure the IDE is logged into the exact account they want to save.
     fn create_antigravity_account(&self, input: AddAccountInput) -> Result<AppSnapshot> {
+        if crate::agy::binary().is_some() {
+            anyhow::bail!("Antigravity CLI machine-default account is already shown. Saving or switching additional CLI accounts is not supported yet; use agy directly. IDE account capture is separate.");
+        }
         // The IDE only writes the token to state.vscdb on EXIT (lazy write) → quit to flush
         // the logged-in session, read the token, then reopen the IDE for the user (regardless of capture outcome).
         antigravity_quit_ide();
@@ -2504,6 +2507,9 @@ impl ManagedState {
                     .context("Couldn't install the shell hook (~/.zshrc)")?;
             }
             ToolId::Antigravity => {
+                if crate::agy::binary().is_some() {
+                    anyhow::bail!("Antigravity CLI uses the current agy login. Switching CLI accounts is not supported; use agy directly.");
+                }
                 // Quit the IDE (to avoid overwriting state.vscdb on exit) → write the chosen
                 // account's token into the default state.vscdb → reopen the IDE logged into that account.
                 antigravity_quit_ide();
@@ -2653,6 +2659,10 @@ impl ManagedState {
 
     /// Bring the Antigravity IDE to the login screen to add an account that has never logged in.
     pub fn antigravity_new_login(&self) -> Result<AppSnapshot> {
+        if crate::agy::binary().is_some() {
+            crate::tools::launch_login(&ToolId::Antigravity)?;
+            return self.snapshot();
+        }
         let saved: Vec<String> = {
             let data = self
                 .data
@@ -2715,6 +2725,9 @@ fn account_config_dir_with_default(
     account: &Account,
     default_config_dir: &std::path::Path,
 ) -> std::path::PathBuf {
+    if account.tool_id == ToolId::Antigravity && account.is_default {
+        return crate::agy::config_dir();
+    }
     if account.fingerprint.starts_with("profile:") {
         store.account_dir(&account.tool_id, &account.id)
     } else {
@@ -2831,16 +2844,21 @@ fn auto_switch_setting(data: &StoredState, tool_id: &ToolId) -> AutoSwitchSettin
 /// account (pointing to ~/.claude, ~/.codex) — read-only, reading quota like a normal account.
 fn migrate_defaults(accounts: &mut Vec<Account>) {
     accounts.retain(|a| a.id != "system-default");
-    // Antigravity (capture/swap) has no machine Default account — remove the old one if present.
-    accounts.retain(|a| a.id != "default-antigravity");
+    // The CLI machine default is read-only. IDE capture accounts stay separate.
+    if crate::agy::binary().is_none() {
+        accounts.retain(|a| a.id != "default-antigravity");
+    }
     // Every profile-based CLI gets a "Machine default" row: the login the tool already has
-    // outside the app. Antigravity is excluded (it captures/swaps instead).
+    // outside the app. Antigravity CLI uses its existing SecretService login;
+    // captured IDE accounts retain their separate identity matching.
     for tool_id in [
         ToolId::Claude,
         ToolId::Codex,
         ToolId::Cursor,
         ToolId::Opencode,
+        ToolId::Antigravity,
     ] {
+        if tool_id == ToolId::Antigravity && crate::agy::binary().is_none() { continue; }
         let default_id = format!("default-{}", tool_id.as_str());
         if accounts.iter().any(|a| a.id == default_id) {
             continue;
@@ -3064,6 +3082,9 @@ fn can_refresh_quota_for_account(
 
 fn active_account_id_for(store: &Store, tool_id: &ToolId, accounts: &[Account]) -> Option<String> {
     if matches!(tool_id, ToolId::Antigravity) {
+        if crate::agy::binary().is_some() {
+            return accounts.iter().find(|a| a.id == "default-antigravity" && !a.hidden).map(|a| a.id.clone());
+        }
         // The account in use = the account whose token matches the IDE's current token in state.vscdb.
         let current = antigravity_current_token()?;
         return accounts
@@ -3576,6 +3597,9 @@ mod tests {
         assert!(eligible(Some("unsaved-identity")).is_empty());
         // A fetch started for work must be discarded if personal became current before write-back.
         assert!(!can_refresh_quota_for_account(&ToolId::Antigravity, "work", Some("personal")));
+        // The agy CLI's current machine account cannot populate any saved IDE card.
+        assert!(can_refresh_quota_for_account(&ToolId::Antigravity, "default-antigravity", Some("default-antigravity")));
+        assert!(!can_refresh_quota_for_account(&ToolId::Antigravity, "work", Some("default-antigravity")));
         // Other providers read each profile independently and may refresh inactive profiles.
         for tool in [ToolId::Claude, ToolId::Codex, ToolId::Cursor, ToolId::Opencode] {
             assert!(can_refresh_quota_for_account(&tool, "work", None));

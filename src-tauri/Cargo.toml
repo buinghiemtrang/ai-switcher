@@ -1,6 +1,6 @@
 [package]
 name = "ai-account-switcher"
-version = "0.12.1"
+version = "0.12.2"
 description = "AI switcher: desktop account manager for AI coding tools"
 license = "MIT"
 edition = "2021"
@@ -39,3 +39,6 @@ sysinfo = { version = "0.39.6", default-features = false, features = ["system"] 
 
 [target.'cfg(target_os = "macos")'.dependencies]
 keyring = { version = "3.6", features = ["apple-native"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+dbus = "0.9"

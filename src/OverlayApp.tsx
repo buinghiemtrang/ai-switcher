@@ -27,7 +27,7 @@ const toolShortNames: Record<ToolId, string> = {
 };
 
 /** CLIs whose quota can be re-read on demand (Antigravity needs its IDE open). */
-const REFRESHABLE_TOOLS: ToolId[] = ["claude", "codex", "cursor", "opencode"];
+const VISIBLE_TOOLS: ToolId[] = ["claude", "codex", "antigravity"];
 
 const defaultSettings: OverlaySettings = {
   enabled: true,
@@ -40,10 +40,10 @@ const defaultSettings: OverlaySettings = {
   rect: { x: 40, y: 60, width: 288, height: 330 },
 };
 
-/** One line in the overlay: a switchable account, or a quota-only CLI (Cursor / opencode). */
+/** One line in the overlay for a visible account. */
 interface Row {
   key: string;
-  /** Short badge, e.g. `Claude`, `Cursor`. */
+  /** Short badge, e.g. `Claude`, `Codex`, `AG`. */
   toolLabel: string;
   name: string;
   quota: QuotaInfo | null;
@@ -51,13 +51,13 @@ interface Row {
   active: boolean;
   /** API/proxy account: billed through a gateway, so it has no quota of its own. */
   isApi: boolean;
-  /** Included by default when the user hasn't picked anything. */
-  defaultShown: boolean;
+  /** The IDE quota belongs to its current account; other profiles retain cached data. */
+  cached: boolean;
 }
 
 /** Every account the overlay could show, in tab order. */
 function allRows(snapshot: AppSnapshot): Row[] {
-  return snapshot.tools.flatMap((tool) =>
+  return snapshot.tools.filter((tool) => VISIBLE_TOOLS.includes(tool.id)).flatMap((tool) =>
     tool.accounts
       .filter((account) => !account.hidden)
       .map((account) => ({
@@ -67,8 +67,7 @@ function allRows(snapshot: AppSnapshot): Row[] {
         quota: account.quota,
         active: tool.activeAccountId === account.id,
         isApi: Boolean(account.apiProvider),
-        // Default view: the account each CLI is actually using right now.
-        defaultShown: tool.activeAccountId === account.id && tool.id !== "antigravity",
+        cached: tool.id === "antigravity" && tool.activeAccountId !== account.id,
       })),
   );
 }
@@ -76,12 +75,10 @@ function allRows(snapshot: AppSnapshot): Row[] {
 /** The rows to render: the user's picks, or — when nothing is picked — the sensible default set. */
 function selectedRows(snapshot: AppSnapshot, picked: string[]): Row[] {
   const rows = allRows(snapshot);
-  if (picked.length === 0) {
-    return rows.filter((row) => row.defaultShown);
-  }
   const order = new Map(picked.map((key, index) => [key, index]));
-  return rows
-    .filter((row) => order.has(row.key))
+  const selected = rows.filter((row) => order.has(row.key));
+  // Empty or obsolete-only selections (e.g. a removed Cursor pick) mean all accounts.
+  return selected.length === 0 ? rows : selected
     .sort((a, b) => (order.get(a.key) ?? 0) - (order.get(b.key) ?? 0));
 }
 
@@ -190,7 +187,7 @@ export function OverlayApp() {
   const refresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      await Promise.allSettled(REFRESHABLE_TOOLS.map((tool) => api.refreshTool(tool)));
+      await Promise.allSettled(VISIBLE_TOOLS.map((tool) => api.refreshTool(tool)));
       // Read the combined state once everything settled — each refresh returns a snapshot from its
       // own moment, so taking one of them could show the older picture.
       const next = await api.getSnapshot();
@@ -226,7 +223,7 @@ export function OverlayApp() {
     >
       <header className="ovBar" data-tauri-drag-region>
         <span className="ovTitle" data-tauri-drag-region>
-          Quota
+          All quotas
         </span>
         <button className="ovIcon" onClick={() => void refresh()} title="Làm mới quota" disabled={refreshing}>
           {refreshing ? <Loader2 className="ovSpin" size={12} /> : <RefreshCw size={12} />}
@@ -254,7 +251,7 @@ export function OverlayApp() {
           {snapshot === null ? (
             <p className="ovHint">Đang tải…</p>
           ) : rows.length === 0 ? (
-            <p className="ovHint">Chưa chọn account nào — bấm ⚙ để chọn.</p>
+            <p className="ovHint">Chưa có tài khoản. Thêm tài khoản trong AI switcher.</p>
           ) : (
             rows.map((row) => <OverlayRow key={row.key} row={row} compact={settings.compact} />)
           )}
@@ -292,6 +289,8 @@ function OverlayRow({ row, compact }: { row: Row; compact: boolean }) {
         {quota?.plan && <span className="ovPlan">{quota.plan}</span>}
       </div>
 
+      {row.cached && quota && <p className="ovHint">Quota đã lưu · mở tài khoản để làm mới</p>}
+
       {quota?.error && quota.rateLimitedUntil && windows.some((w) => w.percentUsed != null) ? (
         // Rate limited: keep the last good bars (dimmed) and say so in one line.
         <>
@@ -300,6 +299,7 @@ function OverlayRow({ row, compact }: { row: Row; compact: boolean }) {
               <OverlayBar
                 key={`${window.label}-${index}`}
                 label={shortWindowLabel(window.label)}
+                fullLabel={window.label}
                 percent={window.percentUsed}
                 resetAt={window.resetAt}
               />
@@ -322,9 +322,9 @@ function OverlayRow({ row, compact }: { row: Row; compact: boolean }) {
           <OverlayBar
             key={`${window.label}-${index}`}
             label={shortWindowLabel(window.label)}
+            fullLabel={window.label}
             percent={window.percentUsed}
-            // Cursor's buckets share one billing reset — repeating the same countdown on every
-            // row wastes the little width the overlay has.
+            // Shared resets need only one countdown per adjacent group.
             resetAt={
               index > 0 && window.resetAt === windows[index - 1].resetAt ? null : window.resetAt
             }
@@ -337,10 +337,12 @@ function OverlayRow({ row, compact }: { row: Row; compact: boolean }) {
 
 function OverlayBar({
   label,
+  fullLabel,
   percent,
   resetAt,
 }: {
   label: string;
+  fullLabel?: string;
   percent: number | null;
   resetAt: string | null;
 }) {
@@ -348,7 +350,7 @@ function OverlayBar({
   const level = percent === null ? "unknown" : value >= 90 ? "high" : value >= 70 ? "mid" : "low";
   return (
     <div className="ovBarRow">
-      <span className="ovBarLabel">{label}</span>
+      <span className="ovBarLabel" title={fullLabel ?? label}>{label}</span>
       <span className="ovBarTrack" data-level={level}>
         <span className="ovBarFill" style={{ width: `${value}%` }} />
       </span>
@@ -517,18 +519,22 @@ function OverlaySettingsPanel({
   onChange: (next: OverlaySettings) => void;
 }) {
   const rows = snapshot ? allRows(snapshot) : [];
-  const picked = new Set(settings.accounts);
+  const selected = snapshot ? selectedRows(snapshot, settings.accounts) : [];
+  const picked = new Set(selected.map((row) => row.key));
 
   const toggleAccount = (key: string) => {
     const next = picked.has(key)
-      ? settings.accounts.filter((item) => item !== key)
-      : [...settings.accounts, key];
+      ? [...picked].filter((item) => item !== key)
+      : [...picked, key];
     onChange({ ...settings, accounts: next });
   };
 
   return (
     <div className="ovBody ovSettings">
-      <p className="ovSectionTitle">Account hiển thị</p>
+      <div className="ovSelectionHead">
+        <p className="ovSectionTitle">Account hiển thị</p>
+        <button className="ovShowAll" onClick={() => onChange({ ...settings, accounts: [] })}>Hiện tất cả</button>
+      </div>
       {rows.length === 0 ? (
         <p className="ovHint">Chưa có account nào.</p>
       ) : (
@@ -545,7 +551,7 @@ function OverlaySettingsPanel({
           </button>
         ))
       )}
-      <p className="ovHint">Bỏ chọn hết = tự hiện account đang dùng của mỗi CLI.</p>
+      <p className="ovHint">Mặc định hiện tất cả tài khoản. Bỏ chọn hết để hiện lại tất cả.</p>
 
       <p className="ovSectionTitle">Hiển thị</p>
       <label className="ovOpt">

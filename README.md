@@ -29,13 +29,13 @@ Launcher tải bản Linux đã build sẵn, kiểm tra SHA-256 và cài vào t�
 
 ### Cách 2 — Cài bằng file .deb
 
-1. Mở **[trang tải AI switcher](https://github.com/buinghiemtrang/ai-switcher/releases/tag/v0.12.1-linux.1)**.
-2. Trong **Assets**, tải file **`AI.switcher_0.12.1_amd64.deb`** về thư mục **Downloads**.
+1. Mở **[trang tải AI switcher](https://github.com/buinghiemtrang/ai-switcher/releases/tag/v0.12.2-linux.1)**.
+2. Trong **Assets**, tải file **`AI.switcher_0.12.2_amd64.deb`** về thư mục **Downloads**.
 3. Mở Terminal và chạy:
 
 ```bash
 cd ~/Downloads
-sudo apt install "./AI.switcher_0.12.1_amd64.deb"
+sudo apt install "./AI.switcher_0.12.2_amd64.deb"
 ```
 
 4. Tìm **AI switcher** trong menu ứng dụng và mở lên.
@@ -48,7 +48,13 @@ Antigravity Linux hiện là tính năng thử nghiệm; đóng IDE trước khi
 
 ## Giao diện ứng dụng
 
-Ảnh chụp native trên Ubuntu của đầy đủ 8 tab chính. [Xem thêm các màn hình tính năng và hộp thoại](PREVIEW.md).
+Ảnh chụp native trên Ubuntu của đầy đủ 7 tab chính. [Xem thêm các màn hình tính năng và hộp thoại](PREVIEW.md).
+
+### All — Tất cả tài khoản
+
+Màn hình mặc định tổng hợp tài khoản Claude Code, Codex và Antigravity, hiển thị quota từng tài khoản và nút **Refresh all quota**.
+
+![AI switcher — All accounts](docs/preview/all.png)
 
 ### Claude Code
 
@@ -61,18 +67,6 @@ Thẻ tài khoản, quota 5 giờ và quota tuần. Ảnh phản ánh trạng th
 Tài khoản đang dùng, hạn mức, thêm tài khoản và làm mới quota.
 
 ![AI switcher — Codex](docs/preview/codex.png)
-
-### Cursor CLI
-
-Màn hình quản lý tài khoản Cursor CLI.
-
-![AI switcher — Cursor CLI](docs/preview/cursor.png)
-
-### opencode
-
-Màn hình quản lý tài khoản opencode.
-
-![AI switcher — opencode](docs/preview/opencode.png)
 
 ### Antigravity IDE
 

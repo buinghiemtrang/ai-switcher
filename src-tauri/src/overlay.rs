@@ -39,7 +39,7 @@ pub fn show(app: &AppHandle) -> tauri::Result<()> {
     let rect = sanitize_rect(app, settings.rect);
 
     let window = WebviewWindowBuilder::new(app, LABEL, WebviewUrl::App("index.html".into()))
-        .title("Quota")
+        .title("All quotas")
         .inner_size(rect.width, rect.height)
         .position(rect.x, rect.y)
         .min_inner_size(190.0, 78.0)

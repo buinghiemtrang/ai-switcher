@@ -19,12 +19,13 @@ dependencies = [
 
 [[package]]
 name = "ai-account-switcher"
-version = "0.12.1"
+version = "0.12.2"
 dependencies = [
  "anyhow",
  "axum",
  "base64 0.22.1",
  "chrono",
+ "dbus",
  "directories",
  "futures-util",
  "keyring",

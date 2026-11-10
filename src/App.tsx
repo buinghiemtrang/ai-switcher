@@ -108,7 +108,7 @@ const toolDescriptions: Record<ToolId, string> = {
   opencode:
     "The bare `opencode` command follows the selected account (Use button). Each account also has its own `opencode-…` command to run in parallel in another terminal.",
   antigravity:
-    "Save Antigravity IDE login sessions to switch between them. Click Use: the app quits the IDE, loads that account's token, then reopens the IDE.",
+    "Read your Antigravity CLI account and model quotas, or manage saved IDE accounts.",
 };
 
 const visibleToolIds: ToolId[] = ["claude", "codex", "antigravity"];
@@ -349,6 +349,7 @@ export function App() {
   const allAccounts = visibleTools.flatMap((tool) =>
     tool.accounts.filter((account) => !account.hidden).map((account) => ({ tool, account })),
   );
+  const isAgyCli = currentTool?.id === "antigravity" && currentTool.accounts.some((account) => account.isDefault);
   const visibleAccounts = currentTool?.accounts.filter((account) => !account.hidden) ?? [];
   const hiddenAccounts = currentTool?.accounts.filter((account) => account.hidden) ?? [];
   const currentAutoSwitch = currentTool
@@ -765,6 +766,9 @@ export function App() {
                 <p className="allAccountsDescription">Claude Code, Codex and Antigravity accounts with their latest quota.</p>
               </div>
               <div className="actions">
+                <button onClick={() => void api.getOverlaySettings().then((settings) => api.setOverlaySettings({ ...settings, accounts: [], enabled: true })).catch((err) => notify(errorMessage(err), "error"))}>
+                  <Users /> All quotas window
+                </button>
                 <button onClick={refreshAll} disabled={busy !== null || refreshingAccounts.size > 0 || allAccounts.length === 0}>
                   {refreshingAccounts.size > 0 ? <Loader2 className="spin" /> : <RefreshCw />}
                   Refresh all quota
@@ -831,18 +835,19 @@ export function App() {
                         "agNewLogin",
                         api.antigravityNewLogin,
                         undefined,
-                        "Antigravity IDE opened at the sign-in screen. After signing into the new account, click “Save current account”.",
+                        isAgyCli ? "Opened agy. After signing in, return here and refresh quota." : "Antigravity IDE opened. After signing in, save the current account.",
                       )
                     }
                     disabled={!currentTool.installed || busy !== null}
                   >
                     <LogIn />
-                    Sign in new account
+                    {isAgyCli ? "Open agy" : "Sign in new account"}
                   </button>
                 )}
                 <button
                   onClick={() => setDialog("add")}
-                  disabled={!currentTool.installed || busy !== null}
+                  disabled={!currentTool.installed || busy !== null || isAgyCli}
+                  title={isAgyCli ? "The current agy login is shown automatically; manage login in agy." : undefined}
                 >
                   <LogIn />
                   {currentTool.id === "antigravity" ? "Save current account" : "Add account"}
@@ -1304,7 +1309,7 @@ function OverlaySettingsBar({
             ))}
           </div>
         )}
-        <p className="orphanHint">Bỏ chọn hết = tự hiện account đang dùng của mỗi CLI.</p>
+        <p className="orphanHint">Bỏ chọn hết = hiện tất cả tài khoản Claude, Codex và Antigravity.</p>
       </div>
 
       <div className="overlayOptions">

@@ -80,3 +80,15 @@
 - Do not delete user profile dirs or CLI config unless the user explicitly asks.
 - When changing shared-profile behavior, preserve credential isolation and skip API/proxy accounts.
 - Prefer idempotent repair/migration during startup (`ManagedState::heal_active_profiles`) so existing accounts self-heal.
+
+## UI and installation changes (0.12.1)
+
+- All is the default view, combining visible Claude/Codex/Antigravity accounts. Cursor/opencode UI entries are hidden; preserve their stored data.
+- Shared account-card actions must use the card's tool ID, including dialogs opened from All.
+- Antigravity quota is only live for the current IDE identity. Keep inactive profiles cached and recheck identity before write-back.
+- `bin/ai-switcher.cjs` installs a pinned GitHub release through `gh`, verifies SHA256SUMS and registers a user-local desktop app. Update its RELEASE constant when publishing a new app version.
+- Installer tests: `node tests/installer.test.cjs`. User installation belongs in README; source/build/release details belong in DEVELOPMENT.md.
+
+## Session checkpoint
+
+Before resuming unfinished work, read HANDOFF.md. As of 2026-11-09, app 0.12.1 and npx/native All are verified; local documentation and screenshot synchronization remain unfinished. Session memory is under memory/ (ignored).

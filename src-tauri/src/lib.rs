@@ -1,3 +1,4 @@
+mod agy;
 mod api_gateway;
 mod app_state;
 mod detection;
@@ -464,13 +465,14 @@ fn set_overlay_enabled(
     Ok(saved)
 }
 
-/// CLIs whose quota the background poller refreshes. Antigravity is excluded: its quota can only
-/// be read while the IDE is open, via a local language server.
-const POLLED_TOOLS: [ToolId; 4] = [
+/// Providers refreshed by the background poller. Antigravity refresh is restricted
+/// to its known active identity, including the agy CLI machine-default account.
+const POLLED_TOOLS: [ToolId; 5] = [
     ToolId::Claude,
     ToolId::Codex,
     ToolId::Cursor,
     ToolId::Opencode,
+    ToolId::Antigravity,
 ];
 
 pub fn run() {

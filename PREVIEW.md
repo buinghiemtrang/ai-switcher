@@ -1,8 +1,14 @@
 # AI switcher — Preview
 
-Ảnh chụp thật của ứng dụng native chạy trên Ubuntu, bản Linux preview v0.12.0. Các tab phản ánh trạng thái hiện có trên máy: một số CLI và Antigravity chưa được cài; ảnh giao diện không đồng nghĩa các luồng đăng nhập đã được kiểm chứng.
+Ảnh chụp thật của ứng dụng native chạy trên Ubuntu, bản Linux preview v0.12.1. Các tab phản ánh trạng thái hiện có trên máy: một số CLI và Antigravity chưa được cài; ảnh giao diện không đồng nghĩa các luồng đăng nhập đã được kiểm chứng.
 
-## Đủ 8 tab chính
+## Đủ 7 tab chính
+
+### All — Tất cả tài khoản
+
+Màn hình mặc định tổng hợp tài khoản Claude Code, Codex và Antigravity, hiển thị quota từng tài khoản và nút **Refresh all quota**.
+
+![AI switcher — All accounts](docs/preview/all.png)
 
 ### Claude Code
 
@@ -15,18 +21,6 @@ Thẻ tài khoản, quota 5 giờ và quota tuần. Ảnh phản ánh trạng th
 Tài khoản đang dùng, hạn mức, thêm tài khoản và làm mới quota.
 
 ![AI switcher — Codex](docs/preview/codex.png)
-
-### Cursor CLI
-
-Màn hình quản lý tài khoản Cursor CLI.
-
-![AI switcher — Cursor CLI](docs/preview/cursor.png)
-
-### opencode
-
-Màn hình quản lý tài khoản opencode.
-
-![AI switcher — opencode](docs/preview/opencode.png)
 
 ### Antigravity IDE
 

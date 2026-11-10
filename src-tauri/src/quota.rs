@@ -60,12 +60,12 @@ pub fn read_quota(tool_id: &ToolId, config_dir: &Path) -> QuotaInfo {
         ToolId::Claude => read_claude_quota(config_dir),
         ToolId::Cursor => read_cursor_quota(config_dir),
         ToolId::Opencode => read_opencode_quota(config_dir),
-        ToolId::Antigravity => read_antigravity_quota(),
+        ToolId::Antigravity => if config_dir == crate::agy::config_dir() { crate::agy::read_quota() } else { read_antigravity_quota() },
     };
 
     let mut quota = result.unwrap_or_else(|e| match tool_id {
         // Antigravity only exposes quota while the IDE is open (language server runs locally).
-        ToolId::Antigravity => QuotaInfo::with_message("Open Antigravity IDE to read quota"),
+        ToolId::Antigravity => QuotaInfo::with_message(format!("Couldn't read Antigravity quota: {e}")),
         _ => match e.downcast_ref::<ClaudeRateLimited>() {
             // Already a complete, user-facing sentence — no "Couldn't read quota:" prefix.
             Some(limited) => {

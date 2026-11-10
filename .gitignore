@@ -33,3 +33,9 @@ docs/releases/
 # Screenshots published with the application preview
 !docs/preview/
 !docs/preview/*.png
+
+# Local native UI verification recordings
+videos/
+
+# Local session memory
+memory/

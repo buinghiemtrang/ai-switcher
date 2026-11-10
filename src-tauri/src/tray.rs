@@ -1,11 +1,11 @@
-//! macOS menu-bar (tray) icon + native dropdown menu for quick account switching.
+//! Native tray menu for quota summaries and quick account access.
 //!
-//! Native `NSMenu` only renders text + a checkmark (no custom bars/badges). The active
+//! The native menu renders text + a checkmark (no custom bars/badges). The active
 //! account uses a real native checkmark (CheckMenuItem, kept enabled so it isn't greyed
 //! out); every row trails its quota + plan as `· 96% · Plus`. Tools are grouped under a
 //! disabled header with separators between them.
 //!
-//! Claude Code + Codex only (Antigravity switching restarts the IDE — too heavy here).
+//! Claude Code, Codex and Antigravity match the main application navigation.
 //! Rebuilt from a fresh snapshot whenever the app state changes via `rebuild`.
 
 use crate::app_state::ManagedState;
@@ -15,15 +15,14 @@ use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager, Wry};
 use tauri_plugin_notification::NotificationExt;
 
-/// Tools shown in the tray, in order. Antigravity is intentionally excluded (switching it
-/// restarts the IDE — too heavy for a menu-bar click).
-const TRAY_TOOLS: [ToolId; 4] = [
-    ToolId::Claude,
-    ToolId::Codex,
-    ToolId::Cursor,
-    ToolId::Opencode,
-];
+/// Keep the native menu in the same order as the visible application tools.
+const TRAY_TOOLS: [ToolId; 3] = [ToolId::Claude, ToolId::Codex, ToolId::Antigravity];
 
+fn tray_tools(tools: &[ToolStatus]) -> Vec<&ToolStatus> {
+    TRAY_TOOLS.iter().filter_map(|id| tools.iter().find(|tool| tool.id == *id)).collect()
+}
+
+const OPEN_ACCOUNT_PREFIX: &str = "account:open:";
 const SWITCH_PREFIX: &str = "switch:";
 const REFRESH_PREFIX: &str = "refresh:";
 const OVERLAY_ID: &str = "tray:overlay";
@@ -65,15 +64,9 @@ fn build_menu(app: &AppHandle, snapshot: Option<&AppSnapshot>) -> tauri::Result<
 
     if let Some(snapshot) = snapshot {
         let mut any_tool = false;
-        let mut installed_tools = Vec::new();
-        for tool_id in TRAY_TOOLS {
-            let Some(tool) = snapshot.tools.iter().find(|t| t.id == tool_id) else {
-                continue;
-            };
-            if !tool.installed {
-                continue;
-            }
-            installed_tools.push(tool_id.clone());
+        let mut tools_in_menu = Vec::new();
+        for tool in tray_tools(&snapshot.tools) {
+            tools_in_menu.push(tool.id.clone());
             if any_tool {
                 menu.append(&PredefinedMenuItem::separator(app)?)?;
             }
@@ -82,7 +75,7 @@ fn build_menu(app: &AppHandle, snapshot: Option<&AppSnapshot>) -> tauri::Result<
         }
         if any_tool {
             menu.append(&PredefinedMenuItem::separator(app)?)?;
-            append_refresh_section(app, &menu, &installed_tools)?;
+            append_refresh_section(app, &menu, &tools_in_menu)?;
             menu.append(&PredefinedMenuItem::separator(app)?)?;
         }
     }
@@ -96,7 +89,7 @@ fn build_menu(app: &AppHandle, snapshot: Option<&AppSnapshot>) -> tauri::Result<
     menu.append(&CheckMenuItem::with_id(
         app,
         OVERLAY_ID,
-        "Quota overlay",
+        "All quotas window",
         true,
         overlay_on,
         None::<&str>,
@@ -130,12 +123,12 @@ fn tray_tool_from_str(value: &str) -> Option<ToolId> {
 fn append_refresh_section(
     app: &AppHandle,
     menu: &Menu<Wry>,
-    installed_tools: &[ToolId],
+    tools_in_menu: &[ToolId],
 ) -> tauri::Result<()> {
     let refresh_menu = Submenu::with_id(app, "refresh:menu", "Refresh Quotas", true)?;
 
     for tool_id in TRAY_TOOLS {
-        if !installed_tools.contains(&tool_id) {
+        if !tools_in_menu.contains(&tool_id) {
             continue;
         }
         refresh_menu.append(&MenuItem::with_id(
@@ -146,7 +139,7 @@ fn append_refresh_section(
             None::<&str>,
         )?)?;
     }
-    if installed_tools.len() > 1 {
+    if tools_in_menu.len() > 1 {
         refresh_menu.append(&PredefinedMenuItem::separator(app)?)?;
         refresh_menu.append(&MenuItem::with_id(
             app,
@@ -170,11 +163,11 @@ fn append_tool_section(app: &AppHandle, menu: &Menu<Wry>, tool: &ToolStatus) -> 
         None::<&str>,
     )?)?;
 
-    if tool.accounts.is_empty() {
+    if tool.accounts.iter().all(|account| account.hidden) {
         menu.append(&MenuItem::with_id(
             app,
             format!("empty:{}", tool.id.as_str()),
-            "   No accounts",
+            if tool.installed { "   No saved accounts" } else { "   No saved accounts — setup in app" },
             false,
             None::<&str>,
         )?)?;
@@ -189,8 +182,16 @@ fn append_tool_section(app: &AppHandle, menu: &Menu<Wry>, tool: &ToolStatus) -> 
             || account.state == AccountState::Active;
         let needs_login = account.state == AccountState::NeedsLogin;
         let locked = account.is_locked();
-        let id = format!("{SWITCH_PREFIX}{}:{}", tool.id.as_str(), account.id);
-        let label = account_label(account);
+        // Opening an Antigravity account from the tray must not stop a live IDE.
+        // Explicit switching remains available in the main window.
+        let open_in_app = tool.id == ToolId::Antigravity || !tool.installed;
+        let prefix = if open_in_app { OPEN_ACCOUNT_PREFIX } else { SWITCH_PREFIX };
+        let id = format!("{prefix}{}:{}", tool.id.as_str(), account.id);
+        let label = if open_in_app {
+            format!("{}  ·  Open in app", account_label(account))
+        } else {
+            account_label(account)
+        };
 
         if is_active {
             // Native checkmark for the account in use. Kept ENABLED so it renders in the
@@ -200,7 +201,7 @@ fn append_tool_section(app: &AppHandle, menu: &Menu<Wry>, tool: &ToolStatus) -> 
                 app,
                 id,
                 label,
-                true,
+                tool.installed || open_in_app,
                 true,
                 None::<&str>,
             )?)?;
@@ -209,7 +210,7 @@ fn append_tool_section(app: &AppHandle, menu: &Menu<Wry>, tool: &ToolStatus) -> 
                 app,
                 id,
                 label,
-                !needs_login && !locked,
+                open_in_app || (tool.installed && !needs_login && !locked),
                 None::<&str>,
             )?)?;
         }
@@ -221,14 +222,36 @@ fn append_tool_section(app: &AppHandle, menu: &Menu<Wry>, tool: &ToolStatus) -> 
 fn account_label(account: &Account) -> String {
     let mut trailer: Vec<String> = Vec::new();
     if let Some(quota) = &account.quota {
-        if let Some(percent) = quota.five_hour.percent_used {
-            trailer.push(format!("{}%", percent.round() as i64));
+        if account.tool_id == ToolId::Antigravity {
+            if let Some(window) = quota.models.as_ref().and_then(|models| models.iter()
+                .filter(|window| window.percent_used.is_some())
+                .max_by(|a, b| a.percent_used.unwrap_or(0.0).total_cmp(&b.percent_used.unwrap_or(0.0)))) {
+                trailer.push(format!("{} {}%", window.label, window.percent_used.unwrap_or(0.0).round() as i64));
+            }
         }
+        if trailer.is_empty() {
+            if let Some(percent) = quota.five_hour.percent_used {
+                trailer.push(format!("5h {}%", percent.round() as i64));
+            }
+            if let Some(percent) = quota.weekly.percent_used {
+                trailer.push(format!("7d {}%", percent.round() as i64));
+            }
+        }
+        if trailer.is_empty() {
+            if let Some(models) = &quota.models {
+                if let Some(window) = models.iter().find(|window| window.percent_used.is_some()) {
+                    trailer.push(format!("{} {}%", window.label, window.percent_used.unwrap().round() as i64));
+                }
+            }
+        }
+        if trailer.is_empty() { trailer.push("Quota unavailable".to_string()); }
         if let Some(plan) = &quota.plan {
             trailer.push(plan.clone());
         }
     } else if account.api_provider.is_some() {
         trailer.push("API".to_string());
+    } else {
+        trailer.push("Quota unavailable".to_string());
     }
 
     if account.is_locked() {
@@ -246,6 +269,7 @@ fn handle_menu_event(app: &AppHandle, event: tauri::menu::MenuEvent) {
     let id = event.id();
     match id.as_ref() {
         OPEN_ID => show_main_window(app),
+        other if other.starts_with(OPEN_ACCOUNT_PREFIX) => show_main_window(app),
         OVERLAY_ID => toggle_overlay(app),
         QUIT_ID => app.exit(0),
         other if other.starts_with(SWITCH_PREFIX) => switch_from_id(app, id),
@@ -340,4 +364,51 @@ fn show_main_window(app: &AppHandle) {
         let _ = window.unminimize();
         let _ = window.set_focus();
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tool(id: ToolId, installed: bool) -> ToolStatus {
+        ToolStatus { name: id.display_name().to_string(), id, installed, active_account_id: None, accounts: Vec::new() }
+    }
+
+    #[test]
+    fn tray_matches_visible_tools_even_when_cli_is_not_installed() {
+        let tools = vec![tool(ToolId::Cursor, true), tool(ToolId::Codex, true),
+            tool(ToolId::Opencode, true), tool(ToolId::Antigravity, false), tool(ToolId::Claude, false)];
+        let selected: Vec<_> = tray_tools(&tools).into_iter().map(|tool| tool.id.clone()).collect();
+        assert_eq!(selected, vec![ToolId::Claude, ToolId::Codex, ToolId::Antigravity]);
+        assert!(tray_tool_from_str("cursor").is_none());
+        assert!(tray_tool_from_str("opencode").is_none());
+        assert_eq!(tray_tool_from_str("antigravity"), Some(ToolId::Antigravity));
+    }
+
+    #[test]
+    fn tray_missing_tools_are_not_invented() {
+        let tools = vec![tool(ToolId::Codex, false)];
+        assert_eq!(tray_tools(&tools).len(), 1);
+        assert_eq!(tray_tools(&tools)[0].id, ToolId::Codex);
+    }
+
+    #[test]
+    fn account_summary_keeps_unknown_separate_from_zero_and_shows_both_windows() {
+        let mut account: Account = serde_json::from_value(serde_json::json!({
+            "id": "fixture", "toolId": "codex", "name": "Work", "state": "idle",
+            "fingerprint": "", "createdAt": "", "updatedAt": "", "lastUsedAt": null,
+            "quota": null
+        })).unwrap();
+        assert!(account_label(&account).contains("Quota unavailable"));
+        assert!(!account_label(&account).contains("0%"));
+        let mut quota = crate::models::QuotaInfo::with_message("fixture");
+        quota.error = None;
+        quota.five_hour.percent_used = Some(0.0);
+        quota.weekly.percent_used = Some(15.0);
+        account.quota = Some(quota);
+        let label = account_label(&account);
+        assert!(label.contains("5h 0%"));
+        assert!(label.contains("7d 15%"));
+    }
+
 }

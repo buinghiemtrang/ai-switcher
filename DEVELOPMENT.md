@@ -52,10 +52,32 @@ The optional gateway defaults to `127.0.0.1:8783` and uses gateway API keys. Bin
 
 ## Internal distribution
 
-The GitHub workflow builds and tests on pushes and pull requests, then stores the Debian package as an artifact. To publish a downloadable preview installer, run the workflow manually with a new `release_tag` (for example `v0.12.1-linux.1`). The release job runs only after build and tests succeed. A blank tag only builds an artifact. Review and test installers before company rollout.
+The GitHub workflow builds and tests on pushes and pull requests, then stores the Debian package as an artifact. To publish a downloadable preview installer, run the workflow manually with a new `release_tag` (for example `v0.12.2-linux.1`). The release job runs only after build and tests succeed. A blank tag only builds an artifact. Review and test installers before company rollout.
 
 Before a rollout, verify startup, CLI detection, login, quota refresh, account switching, launchers, gateway authorization, and restart persistence using dedicated test accounts. Real provider authentication cannot be verified without those accounts.
 
 ## Verification of Linux preview
 
 Commit `39eed0b` passed the frontend build, all 112 Rust tests, and Ubuntu Debian packaging in GitHub Actions run `42605079746`. The native application was started on the development desktop with no startup error in the captured log. Actual UI interactions and real provider authentication/account switching still require testing, especially Antigravity with the installed IDE version. The installer includes the MIT notice at `/usr/share/doc/ai-switcher/copyright`.
+
+## Phát hành và cập nhật launcher npx
+
+1. Cập nhật version trong `package.json`/`package-lock.json`, `src-tauri/tauri.conf.json` và `src-tauri/Cargo.toml`/`Cargo.lock` bằng công cụ quản lý tương ứng.
+2. Đổi hằng `RELEASE` trong `bin/ai-switcher.cjs` sang tag mới và cập nhật link/tên file `.deb` trong README.
+3. Commit và push source, rồi chạy workflow **Build Ubuntu package** với `release_tag` trùng hằng trên.
+4. Workflow chạy test, build `.deb`, chuẩn hóa tên file và tạo `SHA256SUMS`, sau đó xuất bản GitHub prerelease.
+5. Kiểm tra cài thật bằng `npx --yes github:buinghiemtrang/ai-switcher --install-only` và mở app trước khi chia sẻ.
+
+Launcher dùng trực tiếp source GitHub, không cần publish package lên npm registry. Khi chỉ muốn cài trước mà chưa mở app, dùng `--install-only`; dùng `--update` để tải lại release được ghim trong launcher.
+
+## Quota trong tab All
+
+All chỉ hiển thị Claude Code, Codex và Antigravity. Cursor/opencode vẫn được giữ trong dữ liệu/backend, nhưng không hiển thị trong các tab chính.
+
+Quota Antigravity lấy từ IDE đang chạy. Profile chưa active giữ quota đã lưu; backend kiểm tra danh tính trước khi đọc và trước khi ghi kết quả để tránh gán quota sang tài khoản khác.
+
+## Kiểm chứng 0.12.1
+
+Source native `984ff76` đã qua 113 test Rust, 5 test installer Node và build gói Debian trong [Actions run 42612378745](https://github.com/buinghiemtrang/ai-switcher/actions/runs/42612378745).
+
+Đã thử cài thật bằng `npx --yes github:buinghiemtrang/ai-switcher --install-only`, mở bằng đúng lệnh npx trong README, xác nhận All là màn hình mặc định, Refresh all hoàn tất và sidebar không có Cursor/opencode. Đăng nhập và chuyển tài khoản Antigravity thật vẫn chưa được kiểm chứng trên máy này.

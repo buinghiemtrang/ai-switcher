@@ -1,5 +1,12 @@
 # AI switcher changes
 
+## 0.12.2 Linux preview
+
+- Recognize the existing agy CLI login via Linux SecretService and read live model quotas from Google.
+- Match tray tools to Claude, Codex and Antigravity; remove Cursor/opencode and show accounts even when a CLI binary is missing.
+- Open the All quotas floating window directly from All or tray; default to all supported accounts.
+- Keep agy account switching explicit: current CLI login is read-only; additional CLI profile switching is not supported.
+
 ## 0.12.1 Linux preview
 
 - Added the All tab for Claude Code, Codex and Antigravity account quotas.

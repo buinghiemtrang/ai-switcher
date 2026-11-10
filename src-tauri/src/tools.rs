@@ -363,7 +363,7 @@ pub fn is_installed(tool_id: &ToolId) -> bool {
         ToolId::Codex => command_path("codex").is_some(),
         ToolId::Cursor => command_path(CURSOR_BIN).is_some(),
         ToolId::Opencode => command_path("opencode").is_some(),
-        ToolId::Antigravity => antigravity_ide_available(),
+        ToolId::Antigravity => crate::agy::binary().is_some() || antigravity_ide_available(),
     }
 }
 
@@ -373,7 +373,7 @@ pub fn command_name(tool_id: &ToolId) -> &'static str {
         ToolId::Codex => "codex",
         ToolId::Cursor => CURSOR_BIN,
         ToolId::Opencode => "opencode",
-        ToolId::Antigravity => "antigravity-ide",
+        ToolId::Antigravity => if crate::agy::binary().is_some() { "agy" } else { "antigravity-ide" },
     }
 }
 
@@ -384,7 +384,9 @@ pub fn launch_login(tool_id: &ToolId) -> Result<()> {
         ToolId::Codex => run_login_command("codex", &["login"]),
         ToolId::Cursor => run_login_command(CURSOR_BIN, &["login"]),
         ToolId::Opencode => run_login_command("opencode", &["auth", "login"]),
-        ToolId::Antigravity => antigravity_open_ide(),
+        ToolId::Antigravity => {
+            if crate::agy::binary().is_some() { run_login_command("agy", &[]) } else { antigravity_open_ide() }
+        },
     }
 }
 
